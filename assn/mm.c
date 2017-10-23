@@ -24,15 +24,15 @@
  ********************************************************/
 team_t team = {
     /* Team name */
-    "",
+    "Charlie and Michelle",
     /* First member's full name */
-    "",
+    "Lei, Mei Siu",
     /* First member's email address */
-    "",
+    "michelle.lei@mail.utoronto.ca",
     /* Second member's full name (leave blank if none) */
-    "",
+    "Haoen Huang",
     /* Second member's email address (leave blank if none) */
-    ""
+    "haoen.huang@mail.utoronto.ca"
 };
 
 /*************************************************************************
@@ -71,18 +71,17 @@ void* heap_listp = NULL;
  * Initialize the heap, including "allocation" of the
  * prologue and epilogue
  **********************************************************/
- int mm_init(void)
- {
-   if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1)
-         return -1;
-     PUT(heap_listp, 0);                         // alignment padding
-     PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1));   // prologue header
-     PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1));   // prologue footer
-     PUT(heap_listp + (3 * WSIZE), PACK(0, 1));    // epilogue header
-     heap_listp += DSIZE;
-
-     return 0;
- }
+int mm_init(void)
+{
+    if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1)
+        return -1;
+    PUT(heap_listp, 0);                         // alignment padding
+    PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1));   // prologue header
+    PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1));   // prologue footer
+    PUT(heap_listp + (3 * WSIZE), PACK(0, 1));    // epilogue header
+    heap_listp += DSIZE;
+    return 0;
+}
 
 /**********************************************************
  * coalesce
@@ -162,9 +161,26 @@ void * find_fit(size_t asize)
     void *bp;
     for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
     {
-        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
+        void *hdr_addr = HDRP(bp);
+        size_t bsize = GET_SIZE(hdr_addr);
+        if (!GET_ALLOC(hdr_addr))
         {
-            return bp;
+            //only worth splitting if bsize is great than asize more than memory needed for header and footer
+            if (bsize > asize + DSIZE) {
+                size_t csize = bsize - asize ;
+                //second-part unallocated
+                PUT(hdr_addr+asize, PACK(csize, 0));
+                PUT(FTRP(bp), PACK(csize, 0));
+                //first-half allocated
+                PUT(hdr_addr, PACK(asize, 1));
+                PUT(hdr_addr+asize-WSIZE, PACK(asize, 1));
+                return bp;
+            }
+            else if (asize == bsize) {
+                PUT(hdr_addr, PACK(bsize, 1));
+                PUT(FTRP(bp), PACK(bsize, 1));
+                return bp;
+            }
         }
     }
     return NULL;
@@ -225,7 +241,7 @@ void *mm_malloc(size_t size)
 
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
-        place(bp, asize);
+        //place(bp, asize);
         return bp;
     }
 
