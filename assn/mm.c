@@ -68,6 +68,9 @@ team_t team = {
 
 void* heap_listp = NULL;
 
+/* pointer to the first free block*/
+void* free_list_hd = NULL;
+
 /**********************************************************
  * mm_init
  * Initialize the heap, including "allocation" of the
@@ -79,8 +82,8 @@ int mm_init(void)
         return -1;
     PUT(heap_listp, 0);                         // alignment padding
     PUT(heap_listp + (1 * WSIZE), PACK(2*DSIZE, 1));   // prologue header
-    PUT(heap_listp + (2 * WSIZE), 0);   // prologue predecessor
-    PUT(heap_listp + (3 * WSIZE), 0);   // prologue successor
+    PUT((char *)(heap_listp + (2 * WSIZE)), NULL); //prologue predecessor
+    PUT((char *)(heap_listp + (3 * WSIZE)), NULL);  //prologue successor
     PUT(heap_listp + (4 * WSIZE), PACK(2*DSIZE, 1));   // prologue footer
     PUT(heap_listp + (5 * WSIZE), PACK(0, 1));    // epilogue header
     heap_listp += 2*DSIZE;
@@ -167,8 +170,8 @@ void *extend_heap(size_t words)
        allow us to use the macros like HDRP, FTRP, etc. */
     bp += DSIZE;
     PUT(HDRP(bp), PACK(size, 0));                // free block header
-    PUT(PREP(bp), 0);
-    PUT(SUSP(bp), 0);  
+    PUT(PREP(bp), NULL);
+    PUT(SUSP(bp), NULL);
     PUT(FTRP(bp), PACK(size, 0));                // free block footer
     PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));        // new epilogue header
     /*printf("extending\n");
@@ -226,6 +229,7 @@ void * find_fit(size_t asize)
     return NULL;
 }
 
+//DEPRECATED
 /**********************************************************
  * place
  * Mark the block as allocated
@@ -236,8 +240,6 @@ void place(void* bp, size_t asize)
   size_t bsize = GET_SIZE(HDRP(bp));
 
   PUT(HDRP(bp), PACK(bsize, 1));
-  PUT(PREP(bp), 0);
-  PUT(SUSP(bp), 0);
   PUT(FTRP(bp), PACK(bsize, 1));
 }
 
