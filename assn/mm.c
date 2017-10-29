@@ -57,12 +57,12 @@ team_t team = {
 #define GET_ALLOC(p)    (GET(p) & 0x1)
 
 /* Given block ptr bp, compute address of its header and footer */
-#define HDRP(bp)        ((char *)(bp) - WSIZE)
-#define FTRP(bp)        ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
+#define HDRP(bp)        ((char *)(bp) - WSIZE - DSIZE)
+#define FTRP(bp)        ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE - DSIZE)
 
 /* Given block ptr bp, compute address of next and previous blocks */
-#define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
-#define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
+#define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE - DSIZE)))
+#define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE - DSIZE)))
 
 #define DEBUG 1
 
@@ -82,7 +82,7 @@ int mm_init(void)
     // We need to allocate room for kLength pointers
     int allocate_size = WSIZE * kLength;
 
-    if ((heap_listp = mem_sbrk(4*WSIZE + allocate_size)) == (void *)-1)
+    if ((heap_listp = mem_sbrk(4*WSIZE + allocate_size + DSIZE)) == (void *)-1)
         return -1;
 
     ll_head = heap_listp;
@@ -93,11 +93,11 @@ int mm_init(void)
         *(p + i) = NULL;
     }
     PUT(heap_listp + (0 * WSIZE + allocate_size), 0);
-    PUT(heap_listp + (1 * WSIZE + allocate_size), PACK(DSIZE, 1));   // prologue header
-    PUT(heap_listp + (2 * WSIZE + allocate_size), PACK(DSIZE, 1));   // prologue footer
-    PUT(heap_listp + (3 * WSIZE + allocate_size), PACK(0, 1));    // epilogue header
+    PUT(heap_listp + (1 * WSIZE + allocate_size), PACK(DSIZE * 2, 1));   // prologue header
+    PUT(heap_listp + (2 * WSIZE + allocate_size + DSIZE), PACK(DSIZE * 2, 1));   // prologue footer
+    PUT(heap_listp + (3 * WSIZE + allocate_size + DSIZE), PACK(0, 1));    // epilogue header
     
-    heap_listp += DSIZE + allocate_size;
+    heap_listp += DSIZE + allocate_size + DSIZE;
     return 0;
 }
 
@@ -157,7 +157,7 @@ void *extend_heap(size_t words)
     size = (words % 2) ? (words+1) * WSIZE : words * WSIZE;
     if ( (bp = mem_sbrk(size)) == (void *)-1 )
         return NULL;
-
+    bp += DSIZE;
     /* Initialize free block header/footer and the epilogue header */
     PUT(HDRP(bp), PACK(size, 0));                // free block header
     PUT(FTRP(bp), PACK(size, 0));                // free block footer
