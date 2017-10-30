@@ -72,10 +72,56 @@ team_t team = {
 #define DEBUG 1
 
 const int kListSizes[12] = { 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 1 << 30};
-int* ll_head = NULL;
+uintptr_t* ll_head = NULL;
 const int kLength = sizeof(kListSizes) / sizeof(kListSizes[0]);
 const int kOverhead = 16; // bytes
 void* heap_listp = NULL;
+
+void print_segregated_list(void) {
+    for (int i = 0; i < kLength; ++i) {
+        uintptr_t* cur = GET(ll_head + i);
+        printf("%d: ->", kListSizes[i]); fflush(stdout);
+        while (cur != -1) {
+            // Print out the size, and
+            printf("%d -> ", GET_SIZE(HDRP(cur)));
+            cur = GET(GET_NEXT(cur));
+        }
+        printf("\n");
+    }
+}
+
+int get_appropriate_list(size_t asize) {
+    int list_choice = -1;
+    for (int i = 0; i < kLength; ++i) {
+        if (kListSizes[i] >= asize) {
+            list_choice = i;
+            break;
+        }
+    }
+    return list_choice;
+}
+
+int get_possible_list(size_t asize) {
+    int list_choice = -1;
+    for (int i = 0; i < kLength; ++i) {
+        if (kListSizes[i] >= asize && *(ll_head + i) != -1) {
+            list_choice = i;
+            break;
+        }
+    }
+    return list_choice;
+}
+
+void add_to_list(void* p, int list_number) {
+    /* Have the new block be the new head */
+    /* Copy over old head to current head's next pointer */
+    /* If it's already at head, do nothing */
+    if (GET(ll_head + list_number) != -1 || GET(ll_head + list_number) == GET(GET_NEXT(p))) { return; }
+    PUT(GET_NEXT(p), GET(ll_head + list_number));
+    printf("%x, %x", (uintptr_t)(ll_head + list_number), (uintptr_t)p);
+    PUT(ll_head + list_number, p);
+}
+
 
 /**********************************************************
  * mm_init
@@ -119,7 +165,8 @@ void *coalesce(void *bp)
     size_t size = GET_SIZE(HDRP(bp));
 
     if (prev_alloc && next_alloc) {       /* Case 1 */
-        // TODO: add the current block to the app ll
+        int appropriate_list = get_appropriate_list(size);
+        add_to_list(bp, appropriate_list);
         return bp;
     }
 
@@ -195,16 +242,10 @@ void* find_fit(size_t asize)
     // Determine the minimum size block we need, and pick the segregated list
     // to check
     // Look through the linked list, find the first set of unallocated blocks
-    int list_choice = -1;
-    for (int i = 0; i < kLength; ++i) {
-        if (kListSizes[i] >= asize && *(ll_head + i) != -1) {
-            list_choice = i;
-            break;
-        }
-    }
-
+    int list_choice = get_appropriate_list(asize);
     if (DEBUG) {
         printf("Needs: %zu room, Picking: %d\n", asize, list_choice);
+        print_segregated_list();
     }
 
     //if (list_choice == -1) {
