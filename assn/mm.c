@@ -60,13 +60,18 @@ team_t team = {
 #define HDRP(bp)        ((char *)(bp) - WSIZE - DSIZE)
 #define FTRP(bp)        ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE - DSIZE)
 
+/* Given block ptr bp, compute address of the prev and next in LinkedList */
+#define GET_PREV(bp)    ((char *)(bp) - DSIZE)
+#define GET_NEXT(bp)    ((char *)(bp) - WSIZE)
+
+
 /* Given block ptr bp, compute address of next and previous blocks */
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE - DSIZE)))
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE - DSIZE)))
 
 #define DEBUG 1
 
-const int kListSizes[12] = { 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384};
+const int kListSizes[12] = { 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 1 << 30};
 int* ll_head = NULL;
 const int kLength = sizeof(kListSizes) / sizeof(kListSizes[0]);
 const int kOverhead = 16; // bytes
@@ -86,11 +91,9 @@ int mm_init(void)
         return -1;
 
     ll_head = heap_listp;
-    //PUT(heap_listp, 0);                         // alignment padding
     int** p = heap_listp;
-    for (int i = 0; i < kLength; ++i) {
-        //PUT_NULL(heap_listp + i * WSIZE);
-        *(p + i) = NULL;
+    for (int i = 0; i < kLength + 1; ++i) {
+        PUT(p + i, -1);    // Set the initial values to NULL
     }
     PUT(heap_listp + (0 * WSIZE + allocate_size), 0);
     PUT(heap_listp + (1 * WSIZE + allocate_size), PACK(DSIZE * 2, 1));   // prologue header
@@ -116,28 +119,35 @@ void *coalesce(void *bp)
     size_t size = GET_SIZE(HDRP(bp));
 
     if (prev_alloc && next_alloc) {       /* Case 1 */
+        // TODO: add the current block to the app ll
         return bp;
     }
 
     else if (prev_alloc && !next_alloc) { /* Case 2 */
+        // TODO: remove the previous block from the appropriate ll
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
+        // TODO: add the previous block, with newly updated size, to the app ll
         return (bp);
     }
 
     else if (!prev_alloc && next_alloc) { /* Case 3 */
+        // TODO: remove the next block from the appropriate ll
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+        // TODO: add current block, with newly updated size, to the app ll
         return (PREV_BLKP(bp));
     }
 
     else {            /* Case 4 */
+        // TODO: remove next and prev block from their appropriate ll
         size += GET_SIZE(HDRP(PREV_BLKP(bp)))  +
             GET_SIZE(FTRP(NEXT_BLKP(bp)))  ;
         PUT(HDRP(PREV_BLKP(bp)), PACK(size,0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size,0));
+        // TODO: add previous block, with newly updated size, to the app ll
         return (PREV_BLKP(bp));
     }
 }
@@ -158,12 +168,16 @@ void *extend_heap(size_t words)
     if ( (bp = mem_sbrk(size)) == (void *)-1 )
         return NULL;
     bp += DSIZE;
+
     /* Initialize free block header/footer and the epilogue header */
     PUT(HDRP(bp), PACK(size, 0));                // free block header
+    PUT(GET_PREV(bp), -1);                       // set prev to NULL
+    PUT(GET_NEXT(bp), -1);                       // set next to NULL
     PUT(FTRP(bp), PACK(size, 0));                // free block footer
     PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));        // new epilogue header
 
     /* Coalesce if the previous block was free */
+    /* Let coalesce deal with the modification of the SLL */
     return coalesce(bp);
 }
 
@@ -180,17 +194,20 @@ void* find_fit(size_t asize)
 
     // Determine the minimum size block we need, and pick the segregated list
     // to check
-    int list_choice = 12;
+    // Look through the linked list, find the first set of unallocated blocks
+    int list_choice = -1;
     for (int i = 0; i < kLength; ++i) {
-        if (kListSizes[i] >= asize) {
+        if (kListSizes[i] >= asize && *(ll_head + i) != -1) {
             list_choice = i;
             break;
         }
     }
+
     if (DEBUG) {
-        printf("Needs: %d room, Picking: %d\n", asize, list_choice);
+        printf("Needs: %zu room, Picking: %d\n", asize, list_choice);
     }
-    // TODO: Look through the linked list, find the first set of unallocated blocks
+
+    //if (list_choice == -1) {
 
     for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
     {
@@ -243,9 +260,18 @@ void mm_free(void *bp)
       return;
     }
     size_t size = GET_SIZE(HDRP(bp));
+            
     PUT(HDRP(bp), PACK(size,0));
     PUT(FTRP(bp), PACK(size,0));
     coalesce(bp);
+
+    // Add this freed block to the correct segregated ll
+    // Find the correct segregated ll
+    for (int i = 0; i < kLength; ++i) {
+        if (size >= kListSizes[i]) {
+            // Add it as the first element of the ith ll
+        }
+    }
 }
 
 
