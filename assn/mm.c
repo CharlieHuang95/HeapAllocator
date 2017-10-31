@@ -41,7 +41,8 @@ team_t team = {
 *************************************************************************/
 #define WSIZE       sizeof(void *)            /* word size (bytes) */
 #define DSIZE       (2 * WSIZE)            /* doubleword size (bytes) */
-#define CHUNKSIZE   (1<<7)      /* initial heap size (bytes) */
+//#define CHUNKSIZE   (1<<7)      /* initial heap size (bytes) */
+#define CHUNKSIZE   0      /* initial heap size (bytes) */
 
 #define MAX(x,y) ((x) > (y)?(x) :(y))
 
@@ -71,7 +72,7 @@ team_t team = {
 
 #define DEBUG 1
 
-const int kListSizes[12] = { 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 1 << 30};
+const int kListSizes[20] = { 64, 128, 256, 512, 1024, 2048, 4096, 8192, 1 << 14, 1 << 15, 1 << 16, 1 << 17, 1 << 18, 1 << 19, 1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25};
 uintptr_t* ll_head = NULL;
 const int kLength = sizeof(kListSizes) / sizeof(kListSizes[0]);
 const int kOverhead = 16; // bytes
@@ -93,7 +94,7 @@ void print_segregated_list(void) {
 int get_appropriate_list(size_t asize) {
     int list_choice = -1;
     for (int i = 0; i < kLength; ++i) {
-        if (kListSizes[i] >= asize) {
+        if (kListSizes[i] >= asize) {// * 2) {
             list_choice = i;
             break;
         }
@@ -104,7 +105,10 @@ int get_appropriate_list(size_t asize) {
 int get_possible_list(size_t asize) {
     int list_choice = -1;
     for (int i = 0; i < kLength; ++i) {
-        if (kListSizes[i] >= asize && *(ll_head + i) != -1) {
+        if (kListSizes[i] >= asize * 2 && GET((ll_head + i)) != -1) {
+            if (DEBUG) {
+                printf("Found possible choice at: %d\n", i);
+            }
             list_choice = i;
             break;
         }
@@ -113,37 +117,66 @@ int get_possible_list(size_t asize) {
 }
 
 void add_to_list(void* p, int list_number) {
+
+    list_number = get_appropriate_list(GET_SIZE(HDRP(p)));
     if (DEBUG) {
-        printf("ADDTOLIST CALLED for size %d\n", GET_SIZE(HDRP(p)));
+        printf("ADDTOLIST CALLED for size %d: %d\n", GET_SIZE(HDRP(p)), list_number);
+        print_segregated_list();
     }
+    
+    /* if the next one is the epilogue (size zero and unallocated), just return */
+    //if (
     /* Have the new block be the new head */
     /* Copy over old head to current head's next pointer */
     /* If it's already at head, do nothing */
-    //if (GET(ll_head + list_number) != -1 || GET(ll_head + list_number) == GET(GET_NEXT(p))) { return; }
+    if (GET(ll_head + list_number) != -1) {
+        // Set the next node to have its previous point here
+        PUT(GET_PREV(GET(ll_head + list_number)), p);
+    } 
+    //|| GET(ll_head + list_number) == GET(GET_NEXT(p))) { return; }
     PUT(GET_NEXT(p), GET(ll_head + list_number));
     PUT(GET_PREV(p), -1);
     PUT(ll_head + list_number, p);
+    if (DEBUG) {
+        print_segregated_list();
+    }
 }
 
 void free_from_list(void* p, int list_number) {
     if (DEBUG) {
         printf("FREEFROMLIST CALLED for size %d\n", GET_SIZE(HDRP(p)));
     }
-    /* Get the head of the appropriate list */
+    /* Check to see if its at the head */
     /* if it is at the head, adjust */
+    list_number = get_appropriate_list(GET_SIZE(HDRP(p)));
+    printf("should be in %d\n", get_appropriate_list(GET_SIZE(HDRP(p))));
+    printf("list number: %d\n", list_number);
+    printf("GET(ll_head+list_number_) %d\n", GET(ll_head + list_number));
+    printf("p: %d\n", p);
     if (GET(ll_head + list_number) == p) {
+        if (DEBUG) {
+            printf("Was at the head\n");
+        }
         PUT(ll_head + list_number, GET(GET_NEXT(p)));
     } else {
-        PUT(GET_NEXT(GET_PREV(p)), GET(GET_NEXT(p)));
+        if (DEBUG) {
+            printf("Not at head. About to relieve previous\n");
+            printf("let's see what's at the prev: %d\n", (GET(GET_PREV(p))));
+        }
+        PUT(GET_NEXT(GET(GET_PREV(p))), GET(GET_NEXT(p)));
         if (GET(GET_NEXT(p)) != -1) {
-            PUT(GET_PREV(GET_NEXT(p)), p);
+            if (DEBUG) {
+                printf("Was at the end\n");
+            }
+            PUT(GET_PREV(GET(GET_NEXT(p))), GET(GET_PREV(p)));
         }
     }
-    
     PUT(GET_NEXT(p), -1);
     PUT(GET_PREV(p), -1);
+    if (DEBUG) {
+        print_segregated_list();
+    }
 }
-
 
 /**********************************************************
  * mm_init
@@ -240,6 +273,7 @@ void *coalesce(void *bp)
         size += next_size + prev_size;
         PUT(HDRP(PREV_BLKP(bp)), PACK(size,0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size,0));
+        add_to_list(PREV_BLKP(bp), get_appropriate_list(size));
         // TODO: add previous block, with newly updated size, to the app ll
         return (PREV_BLKP(bp));
     }
@@ -254,7 +288,7 @@ void *coalesce(void *bp)
 void *extend_heap(size_t words)
 {
     if (DEBUG) {
-        printf("Extending heap by %d\n", words * 8);
+        printf("Extending heap by %d\n", words * WSIZE);
     }
     char *bp;
     size_t size;
@@ -283,7 +317,9 @@ void *extend_heap(size_t words)
  **********************************************************/
 void place(void* bp, size_t asize)
 {
-    printf("About to allocate a block of size: %d\n", asize);
+    if (DEBUG) {
+        printf("About to allocate a block of size: %d\n", asize);
+    }
     /* Get the current block size */
     size_t bsize = GET_SIZE(HDRP(bp));
     free_from_list(bp, get_appropriate_list(bsize));
@@ -326,45 +362,61 @@ void place(void* bp, size_t asize)
  **********************************************************/
 void* find_fit(size_t asize)
 {
+    if (DEBUG) {
+        printf("Attempting to find fit for %d\n", asize);
+    }
     void *bp;
 
     // Determine the minimum size block we need, and pick the segregated list
     // to check
     // Look through the linked list, find the first set of unallocated blocks
-    int list_choice = get_appropriate_list(asize);
+    int list_choice = get_possible_list(asize);
     if (DEBUG) {
         printf("Needs: %zu room, Picking: %d\n", asize, list_choice);
     }
 
-    //if (list_choice == -1) {
-
-    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
-        void *hdr_addr = HDRP(bp);
-        size_t bsize = GET_SIZE(hdr_addr);
-        if (!GET_ALLOC(hdr_addr)) {
-            //only worth splitting if bsize is great than asize more than memory needed for header and footer
-            if (bsize > asize + DSIZE) {
-                // TODO: remove the hdr_addr from the free list
-                free_from_list(bp, get_appropriate_list(bsize));
-                size_t csize = bsize - asize;
-                //second-part unallocated
-                // TODO: add this to the appropriate ll
-                add_to_list(bp, get_appropriate_list(csize));
-                PUT(hdr_addr+asize, PACK(csize, 0));
-                PUT(FTRP(bp), PACK(csize, 0));
-
-                //first-half allocated
-                PUT(hdr_addr, PACK(asize, 1));
-                PUT(hdr_addr+asize-WSIZE, PACK(asize, 1));
-                return bp;
-            }
-            else if (asize == bsize) {
-                // TODO: remove hdr_addr from the free list 
-                PUT(hdr_addr, PACK(bsize, 1));
-                PUT(FTRP(bp), PACK(bsize, 1));
-                return bp;
-            }
+    if (list_choice == -1) {
+        if (DEBUG) {
+            printf("Could not find space\n");
         }
+        return NULL;
+    }
+    void* hdr_addr = HDRP(GET(ll_head + list_choice));
+    size_t bsize = GET_SIZE(hdr_addr);
+    if (bsize > asize + DSIZE + DSIZE) {
+        if (DEBUG) {
+            printf("About to separate space from a block in %d, with %d size\n", kListSizes[list_choice], bsize);
+        }
+        // TODO: remove the hdr_addr from the free list
+        free_from_list(GET(ll_head + list_choice), list_choice);
+        size_t csize = bsize - asize;
+        //second-part unallocated
+        // TODO: add this to the appropriate ll
+        if (DEBUG) {
+            printf("Was able to separate %d\n", csize);
+            print_segregated_list();
+        }
+        PUT(hdr_addr+asize, PACK(csize, 0));
+        PUT(FTRP(bp), PACK(csize, 0));
+        if (DEBUG) {
+            printf("before calling atl:\n");
+            print_segregated_list();
+        }
+        add_to_list(hdr_addr+asize + DSIZE + WSIZE, get_appropriate_list(csize));
+                
+        //first-half allocated
+        PUT(hdr_addr, PACK(asize, 1));
+        PUT(hdr_addr+asize-WSIZE, PACK(asize, 1));
+        return hdr_addr + WSIZE + DSIZE;
+    } else if (asize == bsize) {
+        if (DEBUG) {
+            printf("About to directly give a free block\n");
+        }
+        // TODO: remove hdr_addr from the free list 
+        free_from_list(GET(ll_head + list_choice), list_choice);
+        PUT(hdr_addr, PACK(bsize, 1));
+        PUT(FTRP(bp), PACK(bsize, 1));
+        return hdr_addr + WSIZE + DSIZE;
     }
     return NULL;
 }
@@ -387,13 +439,6 @@ void mm_free(void *bp)
     PUT(FTRP(bp), PACK(size,0));
     coalesce(bp);
 
-    // Add this freed block to the correct segregated ll
-    // Find the correct segregated ll
-    for (int i = 0; i < kLength; ++i) {
-        if (size >= kListSizes[i]) {
-            // Add it as the first element of the ith ll
-        }
-    }
     if (DEBUG) {
         printf("Finished Free of size %d:\n", size);
         print_segregated_list();
@@ -434,6 +479,10 @@ void *mm_malloc(size_t size)
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
         //place(bp, asize);
+        if (DEBUG) {
+            printf("Finished Malloc with a fit\n");
+            print_segregated_list();
+        }
         return bp;
     }
 
