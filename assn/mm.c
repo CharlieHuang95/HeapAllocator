@@ -70,7 +70,7 @@ team_t team = {
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE - DSIZE)))
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE - DSIZE)))
 
-#define DEBUG 1
+#define DEBUG 0
 
 const int kListSizes[20] = { 64, 128, 256, 512, 1024, 2048, 4096, 8192, 1 << 14, 1 << 15, 1 << 16, 1 << 17, 1 << 18, 1 << 19, 1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24, 1 << 25};
 uintptr_t* ll_head = NULL;
@@ -84,7 +84,7 @@ void print_segregated_list(void) {
         printf("%d: ->", kListSizes[i]); fflush(stdout);
         while (cur != -1) {
             // Print out the size, and
-            printf("%d -> ", GET_SIZE(HDRP(cur)));
+            printf("%d (%d,%d,%d) -> ", GET_SIZE(HDRP(cur)), GET(GET_PREV(cur)), cur, GET(GET_NEXT(cur)));
             cur = GET(GET_NEXT(cur));
         }
         printf("\n");
@@ -116,9 +116,9 @@ int get_possible_list(size_t asize) {
     return list_choice;
 }
 
-void add_to_list(void* p, int list_number) {
+void add_to_list(void* p) {
 
-    list_number = get_appropriate_list(GET_SIZE(HDRP(p)));
+    int list_number = get_appropriate_list(GET_SIZE(HDRP(p)));
     if (DEBUG) {
         printf("ADDTOLIST CALLED for size %d: %d\n", GET_SIZE(HDRP(p)), list_number);
         print_segregated_list();
@@ -142,22 +142,27 @@ void add_to_list(void* p, int list_number) {
     }
 }
 
-void free_from_list(void* p, int list_number) {
+void free_from_list(void* p) {
     if (DEBUG) {
         printf("FREEFROMLIST CALLED for size %d\n", GET_SIZE(HDRP(p)));
     }
     /* Check to see if its at the head */
     /* if it is at the head, adjust */
-    list_number = get_appropriate_list(GET_SIZE(HDRP(p)));
-    printf("should be in %d\n", get_appropriate_list(GET_SIZE(HDRP(p))));
-    printf("list number: %d\n", list_number);
-    printf("GET(ll_head+list_number_) %d\n", GET(ll_head + list_number));
-    printf("p: %d\n", p);
+    int list_number = get_appropriate_list(GET_SIZE(HDRP(p)));
+    if (DEBUG) {
+        printf("should be in %d\n", get_appropriate_list(GET_SIZE(HDRP(p))));
+        printf("list number: %d\n", list_number);
+        printf("GET(ll_head+list_number_) %d\n", GET(ll_head + list_number));
+        printf("p: %d\n", p);
+    }
     if (GET(ll_head + list_number) == p) {
         if (DEBUG) {
             printf("Was at the head\n");
         }
         PUT(ll_head + list_number, GET(GET_NEXT(p)));
+        if (GET(GET_NEXT(p)) != -1) {
+            PUT(GET_PREV(GET(GET_NEXT(p))), -1);
+        }
     } else {
         if (DEBUG) {
             printf("Not at head. About to relieve previous\n");
@@ -227,7 +232,7 @@ void *coalesce(void *bp)
         if (DEBUG) {
             printf("No coalescing possible\n");
         }
-        add_to_list(bp, get_appropriate_list(size));
+        add_to_list(bp);
         return bp;
     }
 
@@ -237,12 +242,12 @@ void *coalesce(void *bp)
         }
         int next_size = GET_SIZE(HDRP(NEXT_BLKP(bp)));
         // TODO: remove the next block from the appropriate ll
-        free_from_list(NEXT_BLKP(bp), get_appropriate_list(next_size));
+        free_from_list(NEXT_BLKP(bp));
         size += next_size;
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
         // TODO: add the current block, with newly updated size, to the app ll
-        add_to_list(bp, get_appropriate_list(size));
+        add_to_list(bp);
         return (bp);
     }
 
@@ -252,12 +257,12 @@ void *coalesce(void *bp)
         }
         int prev_size = GET_SIZE(HDRP(PREV_BLKP(bp)));
         // remove the previous block from the appropriate ll
-        free_from_list(PREV_BLKP(bp), get_appropriate_list(prev_size));
+        free_from_list(PREV_BLKP(bp));
         size += prev_size;
         PUT(FTRP(bp), PACK(size, 0));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         // add previous block, with newly updated size, to the app ll
-        add_to_list(PREV_BLKP(bp), get_appropriate_list(size));
+        add_to_list(PREV_BLKP(bp));
         return (PREV_BLKP(bp));
     }
 
@@ -268,12 +273,12 @@ void *coalesce(void *bp)
         // TODO: remove next and prev block from their appropriate ll
         int next_size = GET_SIZE(FTRP(NEXT_BLKP(bp)));
         int prev_size = GET_SIZE(HDRP(PREV_BLKP(bp)));
-        free_from_list(PREV_BLKP(bp), get_appropriate_list(prev_size));
-        free_from_list(NEXT_BLKP(bp), get_appropriate_list(next_size));
+        free_from_list(PREV_BLKP(bp));
+        free_from_list(NEXT_BLKP(bp));
         size += next_size + prev_size;
         PUT(HDRP(PREV_BLKP(bp)), PACK(size,0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size,0));
-        add_to_list(PREV_BLKP(bp), get_appropriate_list(size));
+        add_to_list(PREV_BLKP(bp));
         // TODO: add previous block, with newly updated size, to the app ll
         return (PREV_BLKP(bp));
     }
@@ -322,7 +327,7 @@ void place(void* bp, size_t asize)
     }
     /* Get the current block size */
     size_t bsize = GET_SIZE(HDRP(bp));
-    free_from_list(bp, get_appropriate_list(bsize));
+    free_from_list(bp);
     // TODO: add prev and next
     PUT(HDRP(bp), PACK(bsize, 1));
     PUT(FTRP(bp), PACK(bsize, 1));
@@ -388,7 +393,8 @@ void* find_fit(size_t asize)
             printf("About to separate space from a block in %d, with %d size\n", kListSizes[list_choice], bsize);
         }
         // TODO: remove the hdr_addr from the free list
-        free_from_list(GET(ll_head + list_choice), list_choice);
+        void* tmp = GET(ll_head + list_choice);
+        free_from_list(GET(ll_head + list_choice));
         size_t csize = bsize - asize;
         //second-part unallocated
         // TODO: add this to the appropriate ll
@@ -397,12 +403,12 @@ void* find_fit(size_t asize)
             print_segregated_list();
         }
         PUT(hdr_addr+asize, PACK(csize, 0));
-        PUT(FTRP(bp), PACK(csize, 0));
+        PUT(FTRP(tmp), PACK(csize, 0));
         if (DEBUG) {
             printf("before calling atl:\n");
             print_segregated_list();
         }
-        add_to_list(hdr_addr+asize + DSIZE + WSIZE, get_appropriate_list(csize));
+        add_to_list(hdr_addr+asize + DSIZE + WSIZE);
                 
         //first-half allocated
         PUT(hdr_addr, PACK(asize, 1));
@@ -413,7 +419,7 @@ void* find_fit(size_t asize)
             printf("About to directly give a free block\n");
         }
         // TODO: remove hdr_addr from the free list 
-        free_from_list(GET(ll_head + list_choice), list_choice);
+        free_from_list(GET(ll_head + list_choice));
         PUT(hdr_addr, PACK(bsize, 1));
         PUT(FTRP(bp), PACK(bsize, 1));
         return hdr_addr + WSIZE + DSIZE;
