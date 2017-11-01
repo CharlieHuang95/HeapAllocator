@@ -527,6 +527,14 @@ void *mm_realloc(void *ptr, size_t size)
     void *newptr;
     size_t copySize;
 
+    copySize = GET_SIZE(HDRP(oldptr));
+    if (size + 48 < copySize) {
+        return oldptr;
+    }
+
+    // TODO: check to see if there is space at the end
+
+    // TODO: otherwise find new place for it
     newptr = mm_malloc(size);
     if (newptr == NULL)
       return NULL;
@@ -534,7 +542,8 @@ void *mm_realloc(void *ptr, size_t size)
     /* Copy the old data. */
     copySize = GET_SIZE(HDRP(oldptr));
     if (size < copySize)
-      copySize = size;
+        copySize = size;
+        // TODO: change location of end ptr, break off another piece if possible, return
     memcpy(newptr, oldptr, copySize);
     mm_free(oldptr);
     return newptr;
