@@ -71,6 +71,7 @@ team_t team = {
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE - DSIZE)))
 
 #define DEBUG 0
+#define M_DEBUG 0
 
 const int kListSizes[20] = { 64, 128, 256, 512, 1024, 2048, 4096, 8192, 1 << 14,
                              1 << 15, 1 << 16, 1 << 17, 1 << 18, 1 << 19,
@@ -82,6 +83,7 @@ const int kLength = sizeof(kListSizes) / sizeof(kListSizes[0]);
 // A pointer to the head of the segregated linked-list
 uintptr_t* ll_head = NULL;
 void* heap_listp = NULL;
+void* heap_tailp = NULL;
 
 void print_segregated_list(void) {
     for (int i = 0; i < kLength; ++i) {
@@ -112,15 +114,34 @@ int get_appropriate_list(size_t asize) {
     return list_choice;
 }
 
-int get_possible_list(size_t asize) {
-    int list_choice = -1;
-    for (int i = 0; i < kLength; ++i) {
+void* get_possible_list(size_t asize) {
+    int i;
+    uintptr_t* cur = NULL;
+    /*for (i = 0; i < kLength; ++i) {
+      if (kListSizes[i] >= asize && GET((ll_head + i)) != -1) {
+        cur = GET(ll_head + i);
+        while (cur != -1) {
+          // Print out the size, pointer to prev, current address, and next
+          if (GET_SIZE(HDRP(cur)) >= asize){
+            if (DEBUG) {
+              printf("found cur same level: %p\n", cur);
+            }
+            return (void *)cur;
+          }
+          cur = GET(GET_NEXT(cur));
+        }
+      }
+    }*/
+    for (i=0; i < kLength; ++i) {
         if (kListSizes[i] >= asize * 2 && GET((ll_head + i)) != -1) {
-            list_choice = i;
-            break;
+            cur = GET(ll_head + i);
+            if (DEBUG) {
+              printf("found cur 1-level up: %p\n", cur);
+            }
+            return (void *)cur;
         }
     }
-    return list_choice;
+    return NULL;
 }
 
 void add_to_list(void* p) {
@@ -173,7 +194,6 @@ int mm_init(void)
 
     if ((heap_listp = mem_sbrk(4*WSIZE + allocate_size + DSIZE)) == (void *)-1)
         return -1;
-
     ll_head = heap_listp;
     int** p = heap_listp;
     for (int i = 0; i < kLength + 1; ++i) {
@@ -183,8 +203,11 @@ int mm_init(void)
     PUT(heap_listp + (1 * WSIZE + allocate_size), PACK(DSIZE * 2, 1));   // prologue header
     PUT(heap_listp + (2 * WSIZE + allocate_size + DSIZE), PACK(DSIZE * 2, 1));   // prologue footer
     PUT(heap_listp + (3 * WSIZE + allocate_size + DSIZE), PACK(0, 1));    // epilogue header
-    
     heap_listp += DSIZE + allocate_size + DSIZE;
+    heap_tailp = heap_listp;
+    if(DEBUG) {
+      printf("init heap head %p\n", heap_listp);
+    }
     return 0;
 }
 
@@ -231,6 +254,7 @@ void *coalesce(void *bp)
 
     else if (!prev_alloc && next_alloc) { /* Case 3 */
         if (DEBUG) {
+          printf("%p %p prev size:%lu prev alloc:%lu\n", bp, PREV_BLKP(bp), GET_SIZE(HDRP(PREV_BLKP(bp))), GET_ALLOC(FTRP(PREV_BLKP(bp))));
             printf("About to combine with previous\n");
         }
         int prev_size = GET_SIZE(HDRP(PREV_BLKP(bp)));
@@ -278,6 +302,21 @@ void *extend_heap(size_t words)
 
     /* Allocate an even number of words to maintain alignments */
     size = (words % 2) ? (words+1) * WSIZE : words * WSIZE;
+    if (M_DEBUG) {
+      printf("original required size: %lu Is tail block free?:%d tail block size:%lu\n", size, GET_ALLOC(HDRP(heap_tailp)), GET_SIZE(HDRP(heap_tailp)));
+    }
+    if (GET_ALLOC(HDRP(heap_tailp)) == 0) {
+      if (size <= GET_SIZE(HDRP(heap_tailp))) {
+        return heap_tailp;
+      }
+      else {
+        //The last block in the heap is free so can be used to coalesce with the soon allocated block
+        size -= GET_SIZE(HDRP(heap_tailp));
+      }
+    }
+    if (M_DEBUG) {
+      printf("recalculated size: %lu\n", size);
+    }
     if ( (bp = mem_sbrk(size)) == (void *)-1 )
         return NULL;
     bp += DSIZE;
@@ -291,7 +330,8 @@ void *extend_heap(size_t words)
 
     /* Coalesce if the previous block was free */
     /* Let coalesce deal with the modification of the SLL */
-    return coalesce(bp);
+    heap_tailp = coalesce(bp);
+    return heap_tailp;
 }
 
 /**********************************************************
@@ -327,41 +367,50 @@ void* find_fit(size_t asize)
 
     // Determine the minimum size block we need, and pick the segregated list
     // to check
-    int list_choice = get_possible_list(asize);
-    if (list_choice == -1) {
+    void *bp = get_possible_list(asize);
+    if (bp == NULL) {
+        if (DEBUG) {
+          printf("find_fit did not find anything\n");
+        }
         return NULL;
     }
     if (DEBUG) {
-        printf("Needs: %zu room, Picking from list: %d\n", asize, list_choice);
+        printf("found bp: %p\n", bp);
     }
 
-    void* bp = GET(ll_head + list_choice);
+    int move_heap_tail = 0;
+    if (bp == heap_tailp) {
+      move_heap_tail = 1;
+    }
     void* hdr_addr = HDRP(bp);
     size_t bsize = GET_SIZE(hdr_addr);
     if (bsize > asize + DSIZE + DSIZE) {
         if (DEBUG) {
-            printf("Separated a block in %dth list, of size %d.\n",
-                   kListSizes[list_choice], bsize);
+            printf("Separated a block of size %d.\n", bsize);
         }
         // Remove the block from the free list
-        void* tmp = GET(ll_head + list_choice);
-        free_from_list(GET(ll_head + list_choice));
+        void* tmp = bp;
+        free_from_list(bp);
         size_t csize = bsize - asize;
         // second-part unallocated
         PUT(hdr_addr+asize, PACK(csize, 0));
         PUT(FTRP(tmp), PACK(csize, 0));
         // TODO: improve style
         add_to_list(hdr_addr+asize + DSIZE + WSIZE);
-                
+        if (move_heap_tail) {
+          heap_tailp = hdr_addr+asize + DSIZE + WSIZE;
+        }
         // first-half allocated
         PUT(hdr_addr, PACK(asize, 1));
         PUT(hdr_addr+asize-WSIZE, PACK(asize, 1));
-        return hdr_addr + WSIZE + DSIZE;
-    } else if (asize == bsize) {
-        free_from_list(GET(ll_head + list_choice));
-        PUT(hdr_addr, PACK(bsize, 1));
+        //return hdr_addr + WSIZE + DSIZE;
+        return bp;
+    } else if (bsize >= asize) {
+        free_from_list(bp);
+        PUT(HDRP(bp), PACK(bsize, 1));
         PUT(FTRP(bp), PACK(bsize, 1));
-        return hdr_addr + WSIZE + DSIZE;
+        //return hdr_addr + WSIZE + DSIZE;
+        return bp;
     }
     return NULL;
 }
@@ -378,11 +427,18 @@ void mm_free(void *bp)
     if (bp == NULL){
       return;
     }
+    int move_heap_tail = 0;
+    if (bp == heap_tailp) {
+      move_heap_tail = 1;
+    }
     size_t size = GET_SIZE(HDRP(bp));
             
     PUT(HDRP(bp), PACK(size,0));
     PUT(FTRP(bp), PACK(size,0));
-    coalesce(bp);
+    void *new_bp = coalesce(bp);
+    if (move_heap_tail) {
+      heap_tailp = new_bp;
+    }
 
     if (DEBUG) {
         printf("Finished Free of size %d:\n", size);
