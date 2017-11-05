@@ -373,6 +373,45 @@ void place(void* bp, size_t asize)
 }
 
 /**********************************************************
+* separate_if_applicable
+* Given a block pointer (bp) and a size_t (asize) that is
+* guaranteed to fit within, split the block into two if
+* able to.
+**********************************************************/
+void separate_if_applicable(void* bp, size_t asize) {
+	void* hdr_addr = HDRP(bp);
+	size_t bsize = GET_SIZE(hdr_addr);
+	if (bsize > asize + DSIZE + DSIZE) {
+		if (DEBUG) {
+			printf("Separated a block of size %lu.\n", bsize);
+		}
+		// Remove the block from the free list
+		free_from_list(bp);
+		size_t csize = bsize - asize;
+		// first-half allocated
+		PUT(hdr_addr, PACK(asize, 1));
+		PUT(hdr_addr + asize - WSIZE, PACK(asize, 1));
+		// second-part unallocated
+		PUT(hdr_addr + asize, PACK(csize, 0));
+		PUT(hdr_addr + bsize - WSIZE, PACK(csize, 0));
+		// TODO: improve style
+		add_to_list(hdr_addr + asize + DSIZE + WSIZE);
+		if (move_heap_tail) {
+			heap_tailp = hdr_addr + asize + DSIZE + WSIZE;
+		}
+		return bp;
+	}
+	else if (bsize >= asize) {
+		free_from_list(bp);
+		PUT(HDRP(bp), PACK(bsize, 1));
+		PUT(FTRP(bp), PACK(bsize, 1));
+		//return hdr_addr + WSIZE + DSIZE;
+		return bp;
+	}
+	return NULL;
+}
+
+/**********************************************************
  * find_fit
  * Traverse the heap searching for a block to fit asize
  * Return NULL if no free blocks can handle that size
@@ -401,35 +440,7 @@ void* find_fit(size_t asize)
     if (bp == heap_tailp) {
       move_heap_tail = 1;
     }
-    void* hdr_addr = HDRP(bp);
-    size_t bsize = GET_SIZE(hdr_addr);
-    if (bsize > asize + DSIZE + DSIZE) {
-        if (DEBUG) {
-            printf("Separated a block of size %lu.\n", bsize);
-        }
-        // Remove the block from the free list
-        free_from_list(bp);
-        size_t csize = bsize - asize;
-        // first-half allocated
-        PUT(hdr_addr, PACK(asize, 1));
-        PUT(hdr_addr+asize-WSIZE, PACK(asize, 1));
-        // second-part unallocated
-        PUT(hdr_addr+asize, PACK(csize, 0));
-        PUT(hdr_addr+bsize-WSIZE, PACK(csize, 0));
-        // TODO: improve style
-        add_to_list(hdr_addr+asize + DSIZE + WSIZE);
-        if (move_heap_tail) {
-          heap_tailp = hdr_addr + asize + DSIZE + WSIZE;
-        }
-        return bp;
-    } else if (bsize >= asize) {
-        free_from_list(bp);
-        PUT(HDRP(bp), PACK(bsize, 1));
-        PUT(FTRP(bp), PACK(bsize, 1));
-        //return hdr_addr + WSIZE + DSIZE;
-        return bp;
-    }
-    return NULL;
+	separate_if_applicable(bp, asize);
 }
 
 /**********************************************************
