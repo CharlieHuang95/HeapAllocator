@@ -37,8 +37,7 @@ team_t team = {
 *************************************************************************/
 #define WSIZE       sizeof(void *)            /* word size (bytes) */
 #define DSIZE       (2 * WSIZE)            /* doubleword size (bytes) */
-//#define CHUNKSIZE   (1<<7)      /* initial heap size (bytes) */
-#define CHUNKSIZE   0      /* initial heap size (bytes) */
+#define CHUNKSIZE   (1<<7)      /* initial heap size (bytes) */
 
 #define MAX(x,y) ((x) > (y)?(x) :(y))
 
@@ -47,7 +46,9 @@ team_t team = {
 
 /* Read and write a word at address p */
 #define GET(p)          (*(uintptr_t *)(p))
+#define GET_PTR(p)      (*(uintptr_t **)(p))
 #define PUT(p,val)      (*(uintptr_t *)(p) = (val))
+#define PUT_PTR(p,ptr)  (*(uintptr_t **)(p) = (ptr))
 
 /* Read the size and allocated fields from address p */
 #define GET_SIZE(p)     (GET(p) & ~(DSIZE - 1))
@@ -69,7 +70,10 @@ team_t team = {
 #define DEBUG 0
 #define M_DEBUG 0
 
-const int kListSizes[20] = { 64, 128, 256, 512, 1024, 2048, 4096, 8192, 1 << 14,
+/* Forward Declare mm_check */
+int mm_check(void* bp);
+
+const int kListSizes[20] = { 48, 96, 192, 512, 1024, 2048, 4096, 8192, 1 << 14,
                              1 << 15, 1 << 16, 1 << 17, 1 << 18, 1 << 19,
                              1 << 20, 1 << 21, 1 << 22, 1 << 23, 1 << 24,
                              1 << 25};
@@ -84,16 +88,16 @@ void* heap_tailp = NULL;
 /* Helper function that prints out the state of the linked list*/
 void print_segregated_list(void) {
     for (int i = 0; i < kLength; ++i) {
-        uintptr_t* cur = GET(ll_head + i);
+        uintptr_t* cur = GET_PTR(ll_head + i);
         printf("%d: ->", kListSizes[i]);
-        while (cur != -1) {
+        while (cur != NULL) {
             // Print out the size, pointer to prev, current address, and next
-            printf("%d (%d,%d,%d) -> ",
+            printf("%lu (%p,%p,%p) -> ",
                    GET_SIZE(HDRP(cur)),
-                   GET(GET_PREV(cur)),
+                   GET_PTR(GET_PREV(cur)),
                    cur,
-                   GET(GET_NEXT(cur)));
-            cur = GET(GET_NEXT(cur));
+                   GET_PTR(GET_NEXT(cur)));
+            cur = GET_PTR(GET_NEXT(cur));
         }
         printf("\n");
     }
@@ -116,13 +120,13 @@ void* get_possible_list(size_t asize) {
     int i;
     uintptr_t* cur = NULL;
     for (i = 0; i < kLength; ++i) {
-     if (kListSizes[i] >= asize * 2 && GET((ll_head + i)) != -1) {
-        cur = GET(ll_head + i);
-        if (DEBUG) {
-          printf("found cur 1-level up: %p\n", cur);
-        }
+        if (kListSizes[i] >= asize * 2 && GET_PTR(ll_head + i) != NULL) {
+            cur = GET_PTR(ll_head + i);
+            if (DEBUG) {
+            printf("found cur 1-level up: %p\n", cur);
+            }
         return (void *)cur;
-      }
+        }
     }
     return NULL;
 }
@@ -130,43 +134,49 @@ void* get_possible_list(size_t asize) {
 /* Adds a freed block to the linked-list. */
 void add_to_list(void* p) {
 	/* Verify that the given block is freed, and thus should be added to the linked-list*/
+    if (GET_ALLOC(HDRP(p))) {
+        printf("Error: Attempting to add an allocated block.\n");
+    }
 	if (DEBUG) {
-		printf("Adding a block of size %d.\n", GET_SIZE(HDRP(p)));
+		printf("Adding a block of size %lu.\n", GET_SIZE(HDRP(p)));
 	}
     int list_number = get_appropriate_list(GET_SIZE(HDRP(p)));
     /* Check to see if the linked-list is empty (head is null) */
-    uintptr_t* head = GET(ll_head + list_number);
-    if (head != -1) {
+    uintptr_t* head = GET_PTR(ll_head + list_number);
+    if (head != NULL) {
         // Set the next node to have its previous point here
-        PUT(GET_PREV(head), p);
+        PUT_PTR(GET_PREV(head), p);
     } 
     
-    PUT(GET_NEXT(p), GET(ll_head + list_number));
-    PUT(GET_PREV(p), -1);
-    PUT(ll_head + list_number, p);
+    PUT_PTR(GET_NEXT(p), GET_PTR(ll_head + list_number));
+    PUT_PTR(GET_PREV(p), NULL);
+    PUT_PTR(ll_head + list_number, p);
 }
 
 /* Remove an allocated block from the linked-list. */
 void free_from_list(void* p) {
 	/* Verify that the given block is allocated, and thus should be removed from the linked-list */
+    if (!GET_ALLOC(HDRP(p))) {
+        //printf("Error: Attempting to remove a freed block.\n");
+    }
     if (DEBUG) {
-        printf("Removing a block of size %d\n", GET_SIZE(HDRP(p)));
+        printf("Removing a block of size %lu\n", GET_SIZE(HDRP(p)));
     }
     int list_number = get_appropriate_list(GET_SIZE(HDRP(p)));
     /* If it is at the head, we must change the head */
-    if (GET(ll_head + list_number) == p) {
-        PUT(ll_head + list_number, GET(GET_NEXT(p)));
-        if (GET(GET_NEXT(p)) != -1) {
-            PUT(GET_PREV(GET(GET_NEXT(p))), -1);
+    if (GET_PTR(ll_head + list_number) == p) {
+        PUT_PTR(ll_head + list_number, GET_PTR(GET_NEXT(p)));
+        if (GET_PTR(GET_NEXT(p)) != NULL) {
+            PUT_PTR(GET_PREV(GET_PTR(GET_NEXT(p))), NULL); // -1);
         }
     } else {
-        PUT(GET_NEXT(GET(GET_PREV(p))), GET(GET_NEXT(p)));
-        if (GET(GET_NEXT(p)) != -1) {
-            PUT(GET_PREV(GET(GET_NEXT(p))), GET(GET_PREV(p)));
+        PUT_PTR(GET_NEXT(GET_PTR(GET_PREV(p))), GET_PTR(GET_NEXT(p)));
+        if (GET_PTR(GET_NEXT(p)) != NULL ) {//-1) {
+            PUT_PTR(GET_PREV(GET_PTR(GET_NEXT(p))), GET_PTR(GET_PREV(p)));
         }
     }
-    PUT(GET_NEXT(p), -1);
-    PUT(GET_PREV(p), -1);
+    PUT_PTR(GET_NEXT(p), NULL);
+    PUT_PTR(GET_PREV(p), NULL);
 }
 
 /**********************************************************
@@ -184,7 +194,7 @@ int mm_init(void)
     ll_head = heap_listp;
     int** p = heap_listp;
     for (int i = 0; i < kLength + 1; ++i) {
-        PUT(p + i, -1);    // Set the initial values to NULL
+        PUT_PTR(p + i, NULL);    // Set the initial values to NULL
     }
     PUT(heap_listp + (0 * WSIZE + allocate_size), 0);
     PUT(heap_listp + (1 * WSIZE + allocate_size), PACK(DSIZE * 2, 1));   // prologue header
@@ -221,8 +231,8 @@ void *coalesce(void *bp)
             printf("No coalescing possible\n");
         }
         add_to_list(bp);
-        if (heap_tailp==NULL || bp > heap_tailp) {
-          heap_tailp=bp;
+        if (bp > heap_tailp) {
+          heap_tailp = bp;
         }
         return bp;
     }
@@ -231,8 +241,8 @@ void *coalesce(void *bp)
         if (DEBUG) {
             printf("About to combine with next\n");
         }
-        if (heap_tailp!=NULL && heap_tailp == NEXT_BLKP(bp)) {
-          heap_tailp=bp;
+        if (heap_tailp == NEXT_BLKP(bp)) {
+          heap_tailp = bp;
         }
         int next_size = GET_SIZE(HDRP(NEXT_BLKP(bp)));
         // Remove the next block from the appropriate ll
@@ -240,6 +250,9 @@ void *coalesce(void *bp)
         size += next_size;
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
+
+//        free_from_list(NEXT_BLKP(bp));
+
         // Add the current block, with newly updated size, to the app ll
         add_to_list(bp);
         return (bp);
@@ -247,11 +260,15 @@ void *coalesce(void *bp)
 
     else if (!prev_alloc && next_alloc) { /* Case 3 */
         if (DEBUG) {
-          printf("%p %p prev size:%lu prev alloc:%lu\n", bp, PREV_BLKP(bp), GET_SIZE(HDRP(PREV_BLKP(bp))), GET_ALLOC(FTRP(PREV_BLKP(bp))));
+            printf("%p %p prev size:%lu prev alloc:%lu\n",
+                 bp,
+                 PREV_BLKP(bp),
+                 GET_SIZE(HDRP(PREV_BLKP(bp))),
+                 GET_ALLOC(FTRP(PREV_BLKP(bp))));
             printf("About to combine with previous\n");
         }
-        if (heap_tailp!=NULL && heap_tailp == bp) {
-          heap_tailp=PREV_BLKP(bp);
+        if (heap_tailp == bp) {
+          heap_tailp = PREV_BLKP(bp);
         }
         int prev_size = GET_SIZE(HDRP(PREV_BLKP(bp)));
         // Remove the previous block from the appropriate ll
@@ -268,8 +285,9 @@ void *coalesce(void *bp)
         if (DEBUG) {
             printf("About to combine with previous and next\n");
         }
-        if (heap_tailp!=NULL && heap_tailp == NEXT_BLKP(bp)) {
-          heap_tailp=PREV_BLKP(bp);
+        //if (heap_tailp!=NULL && heap_tailp == NEXT_BLKP(bp)) {
+        if (heap_tailp == NEXT_BLKP(bp)) {
+          heap_tailp = PREV_BLKP(bp);
         }
         // Remove next and prev block from their appropriate ll
         int next_size = GET_SIZE(FTRP(NEXT_BLKP(bp)));
@@ -294,7 +312,7 @@ void *coalesce(void *bp)
 void *extend_heap(size_t words)
 {
     if (DEBUG) {
-        printf("Extending heap by %d\n", words * WSIZE);
+        printf("Extending heap by %lu\n", words * WSIZE);
         print_segregated_list();
     }
     char *bp;
@@ -303,7 +321,7 @@ void *extend_heap(size_t words)
     /* Allocate an even number of words to maintain alignments */
     size = (words % 2) ? (words+1) * WSIZE : words * WSIZE;
     if (DEBUG) {
-      printf("original required size: %lu Is tail block free?:%d tail block size:%lu\n", size, GET_ALLOC(HDRP(heap_tailp)), GET_SIZE(HDRP(heap_tailp)));
+      printf("original required size: %lu Is tail block free?:%lu tail block size:%lu\n", size, GET_ALLOC(HDRP(heap_tailp)), GET_SIZE(HDRP(heap_tailp)));
     }
     if (GET_ALLOC(HDRP(heap_tailp)) == 0) {
       if (size <= GET_SIZE(HDRP(heap_tailp))) {
@@ -347,7 +365,7 @@ void *extend_heap(size_t words)
 void place(void* bp, size_t asize)
 {
     if (DEBUG) {
-        printf("About to allocate a block of size: %d\n", asize);
+        printf("About to allocate a block of size: %lu\n", asize);
     }
     /* Get the current block size */
     size_t bsize = GET_SIZE(HDRP(bp));
@@ -356,7 +374,6 @@ void place(void* bp, size_t asize)
     PUT(FTRP(bp), PACK(bsize, 1));
 
     // TODO: Consider breaking the block
-    void *hdr_addr = HDRP(bp);
 }
 
 /**********************************************************
@@ -368,7 +385,7 @@ void place(void* bp, size_t asize)
 void* find_fit(size_t asize)
 {
     if (DEBUG) {
-        printf("Attempting to find fit for %d\n", asize);
+        printf("Attempting to find fit for %lu\n", asize);
     }
 
     // Determine the minimum size block we need, and pick the segregated list
@@ -392,10 +409,9 @@ void* find_fit(size_t asize)
     size_t bsize = GET_SIZE(hdr_addr);
     if (bsize > asize + DSIZE + DSIZE) {
         if (DEBUG) {
-            printf("Separated a block of size %d.\n", bsize);
+            printf("Separated a block of size %lu.\n", bsize);
         }
         // Remove the block from the free list
-        void* tmp = bp;
         free_from_list(bp);
         size_t csize = bsize - asize;
         // first-half allocated
@@ -433,14 +449,13 @@ void mm_free(void *bp)
     if (bp == NULL){
       return;
     }
-    int move_heap_tail = 0;
     size_t size = GET_SIZE(HDRP(bp));
             
     PUT(HDRP(bp), PACK(size,0));
     PUT(FTRP(bp), PACK(size,0));
-    void *new_bp = coalesce(bp);
+    coalesce(bp);
     if (DEBUG) {
-        printf("Finished Free of size %d:\n", size);
+        printf("Finished Free of size %lu:\n", size);
         print_segregated_list();
     }
 }
@@ -457,7 +472,7 @@ void mm_free(void *bp)
 void *mm_malloc(size_t size)
 {   
     if (DEBUG) {
-        printf("Malloc called for size %d\n", size);
+        printf("Malloc called for size %lu\n", size);
         mm_check(heap_listp);
     }
     size_t asize; /* adjusted block size */
