@@ -1,12 +1,12 @@
 /*
- * This implementation replicates the implicit list implementation
- * provided in the textbook
- * "Computer Systems - A Programmer's Perspective"
- * Blocks are never coalesced or reused.
+ * This implementation of malloc uses segregated explicit linked lists.
+ * The head of each linked list is maintained at the top of head.
+ 
+ * Malloc attempts to find a fit in O(1). This is done by finding a free
+ * larger block.
+ * Free does immediate coalescing, and adds the node to the appropriate list.
  * Realloc is implemented directly using mm_malloc and mm_free.
  *
- * NOTE TO STUDENTS: Replace this header comment with your own header
- * comment that gives a high level description of your solution.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,10 +18,6 @@
 #include "mm.h"
 #include "memlib.h"
 
-/*********************************************************
- * NOTE TO STUDENTS: Before you do anything else, please
- * provide your team information in the following struct.
- ********************************************************/
 team_t team = {
     /* Team name */
     "Charlie and Michelle",
@@ -85,6 +81,7 @@ uintptr_t* ll_head = NULL;
 void* heap_listp = NULL;
 void* heap_tailp = NULL;
 
+/* Helper function that prints out the state of the linked list*/
 void print_segregated_list(void) {
     for (int i = 0; i < kLength; ++i) {
         uintptr_t* cur = GET(ll_head + i);
@@ -102,7 +99,7 @@ void print_segregated_list(void) {
     }
 }
 
-/* Find the smallest linked-list that is appropriate to insert the size */
+/* Find the linked-list that is appropriate to insert the free block */
 int get_appropriate_list(size_t asize) {
     int list_choice = -1;
     for (int i = 0; i < kLength; ++i) {
@@ -114,6 +111,7 @@ int get_appropriate_list(size_t asize) {
     return list_choice;
 }
 
+/* Find the smallest linked-list that has a free block that can DEFINITELY fit asize */
 void* get_possible_list(size_t asize) {
     int i;
     uintptr_t* cur = NULL;
@@ -129,11 +127,13 @@ void* get_possible_list(size_t asize) {
     return NULL;
 }
 
+/* Adds a freed block to the linked-list. */
 void add_to_list(void* p) {
+	/* Verify that the given block is freed, and thus should be added to the linked-list*/
+	if (DEBUG) {
+		printf("Adding a block of size %d.\n", GET_SIZE(HDRP(p)));
+	}
     int list_number = get_appropriate_list(GET_SIZE(HDRP(p)));
-    if (DEBUG) {
-        printf("Adding a block of size %d.\n", GET_SIZE(HDRP(p)));
-    }
     /* Check to see if the linked-list is empty (head is null) */
     uintptr_t* head = GET(ll_head + list_number);
     if (head != -1) {
@@ -146,7 +146,9 @@ void add_to_list(void* p) {
     PUT(ll_head + list_number, p);
 }
 
+/* Remove an allocated block from the linked-list. */
 void free_from_list(void* p) {
+	/* Verify that the given block is allocated, and thus should be removed from the linked-list */
     if (DEBUG) {
         printf("Removing a block of size %d\n", GET_SIZE(HDRP(p)));
     }
