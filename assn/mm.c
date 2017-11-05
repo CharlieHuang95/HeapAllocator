@@ -378,7 +378,7 @@ void place(void* bp, size_t asize)
 * guaranteed to fit within, split the block into two if
 * able to.
 **********************************************************/
-void separate_if_applicable(void* bp, size_t asize) {
+void* separate_if_applicable(void* bp, size_t asize) {
 	void* hdr_addr = HDRP(bp);
 	size_t bsize = GET_SIZE(hdr_addr);
 	if (bsize > asize + DSIZE + DSIZE) {
@@ -396,7 +396,7 @@ void separate_if_applicable(void* bp, size_t asize) {
 		PUT(hdr_addr + bsize - WSIZE, PACK(csize, 0));
 		// TODO: improve style
 		add_to_list(hdr_addr + asize + DSIZE + WSIZE);
-		if (move_heap_tail) {
+		if (bp == heap_tailp) {
 			heap_tailp = hdr_addr + asize + DSIZE + WSIZE;
 		}
 		return bp;
@@ -436,11 +436,7 @@ void* find_fit(size_t asize)
         printf("found bp: %p compared to tail:%p\n", bp, heap_tailp);
     }
 
-    int move_heap_tail = 0;
-    if (bp == heap_tailp) {
-      move_heap_tail = 1;
-    }
-	separate_if_applicable(bp, asize);
+	return separate_if_applicable(bp, asize);
 }
 
 /**********************************************************
