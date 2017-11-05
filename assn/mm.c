@@ -117,29 +117,14 @@ int get_appropriate_list(size_t asize) {
 void* get_possible_list(size_t asize) {
     int i;
     uintptr_t* cur = NULL;
-    /*for (i = 0; i < kLength; ++i) {
-      if (kListSizes[i] >= asize && GET((ll_head + i)) != -1) {
+    for (i = 0; i < kLength; ++i) {
+     if (kListSizes[i] >= asize * 2 && GET((ll_head + i)) != -1) {
         cur = GET(ll_head + i);
-        while (cur != -1) {
-          // Print out the size, pointer to prev, current address, and next
-          if (GET_SIZE(HDRP(cur)) >= asize){
-            if (DEBUG) {
-              printf("found cur same level: %p\n", cur);
-            }
-            return (void *)cur;
-          }
-          cur = GET(GET_NEXT(cur));
+        if (DEBUG) {
+          printf("found cur 1-level up: %p\n", cur);
         }
+        return (void *)cur;
       }
-    }*/
-    for (i=0; i < kLength; ++i) {
-        if (kListSizes[i] >= asize * 2 && GET((ll_head + i)) != -1) {
-            cur = GET(ll_head + i);
-            if (DEBUG) {
-              printf("found cur 1-level up: %p\n", cur);
-            }
-            return (void *)cur;
-        }
     }
     return NULL;
 }
@@ -234,12 +219,18 @@ void *coalesce(void *bp)
             printf("No coalescing possible\n");
         }
         add_to_list(bp);
+        if (heap_tailp==NULL || bp > heap_tailp) {
+          heap_tailp=bp;
+        }
         return bp;
     }
 
     else if (prev_alloc && !next_alloc) { /* Case 2 */
         if (DEBUG) {
             printf("About to combine with next\n");
+        }
+        if (heap_tailp!=NULL && heap_tailp == NEXT_BLKP(bp)) {
+          heap_tailp=bp;
         }
         int next_size = GET_SIZE(HDRP(NEXT_BLKP(bp)));
         // Remove the next block from the appropriate ll
@@ -257,6 +248,9 @@ void *coalesce(void *bp)
           printf("%p %p prev size:%lu prev alloc:%lu\n", bp, PREV_BLKP(bp), GET_SIZE(HDRP(PREV_BLKP(bp))), GET_ALLOC(FTRP(PREV_BLKP(bp))));
             printf("About to combine with previous\n");
         }
+        if (heap_tailp!=NULL && heap_tailp == bp) {
+          heap_tailp=PREV_BLKP(bp);
+        }
         int prev_size = GET_SIZE(HDRP(PREV_BLKP(bp)));
         // Remove the previous block from the appropriate ll
         free_from_list(PREV_BLKP(bp));
@@ -271,6 +265,9 @@ void *coalesce(void *bp)
     else {            /* Case 4 */
         if (DEBUG) {
             printf("About to combine with previous and next\n");
+        }
+        if (heap_tailp!=NULL && heap_tailp == NEXT_BLKP(bp)) {
+          heap_tailp=PREV_BLKP(bp);
         }
         // Remove next and prev block from their appropriate ll
         int next_size = GET_SIZE(FTRP(NEXT_BLKP(bp)));
@@ -296,13 +293,14 @@ void *extend_heap(size_t words)
 {
     if (DEBUG) {
         printf("Extending heap by %d\n", words * WSIZE);
+        print_segregated_list();
     }
     char *bp;
     size_t size;
 
     /* Allocate an even number of words to maintain alignments */
     size = (words % 2) ? (words+1) * WSIZE : words * WSIZE;
-    if (M_DEBUG) {
+    if (DEBUG) {
       printf("original required size: %lu Is tail block free?:%d tail block size:%lu\n", size, GET_ALLOC(HDRP(heap_tailp)), GET_SIZE(HDRP(heap_tailp)));
     }
     if (GET_ALLOC(HDRP(heap_tailp)) == 0) {
@@ -330,8 +328,14 @@ void *extend_heap(size_t words)
 
     /* Coalesce if the previous block was free */
     /* Let coalesce deal with the modification of the SLL */
-    heap_tailp = coalesce(bp);
-    return heap_tailp;
+    void* new_bp = coalesce(bp);
+    if (DEBUG) {
+      print_segregated_list();
+    }
+    if (DEBUG && !mm_check(heap_tailp)) {
+      printf("Returning a pointer outside of the heap,\n");
+    }
+    return new_bp;
 }
 
 /**********************************************************
@@ -375,7 +379,7 @@ void* find_fit(size_t asize)
         return NULL;
     }
     if (DEBUG) {
-        printf("found bp: %p\n", bp);
+        printf("found bp: %p compared to tail:%p\n", bp, heap_tailp);
     }
 
     int move_heap_tail = 0;
@@ -392,18 +396,17 @@ void* find_fit(size_t asize)
         void* tmp = bp;
         free_from_list(bp);
         size_t csize = bsize - asize;
-        // second-part unallocated
-        PUT(hdr_addr+asize, PACK(csize, 0));
-        PUT(FTRP(tmp), PACK(csize, 0));
-        // TODO: improve style
-        add_to_list(hdr_addr+asize + DSIZE + WSIZE);
-        if (move_heap_tail) {
-          heap_tailp = hdr_addr+asize + DSIZE + WSIZE;
-        }
         // first-half allocated
         PUT(hdr_addr, PACK(asize, 1));
         PUT(hdr_addr+asize-WSIZE, PACK(asize, 1));
-        //return hdr_addr + WSIZE + DSIZE;
+        // second-part unallocated
+        PUT(hdr_addr+asize, PACK(csize, 0));
+        PUT(hdr_addr+bsize-WSIZE, PACK(csize, 0));
+        // TODO: improve style
+        add_to_list(hdr_addr+asize + DSIZE + WSIZE);
+        if (move_heap_tail) {
+          heap_tailp = hdr_addr + asize + DSIZE + WSIZE;
+        }
         return bp;
     } else if (bsize >= asize) {
         free_from_list(bp);
@@ -422,24 +425,18 @@ void* find_fit(size_t asize)
 void mm_free(void *bp)
 {
     if (DEBUG) {
-        printf("Free called\n");
+      printf("Free called\n");
+      mm_check(bp);
     }
     if (bp == NULL){
       return;
     }
     int move_heap_tail = 0;
-    if (bp == heap_tailp) {
-      move_heap_tail = 1;
-    }
     size_t size = GET_SIZE(HDRP(bp));
             
     PUT(HDRP(bp), PACK(size,0));
     PUT(FTRP(bp), PACK(size,0));
     void *new_bp = coalesce(bp);
-    if (move_heap_tail) {
-      heap_tailp = new_bp;
-    }
-
     if (DEBUG) {
         printf("Finished Free of size %d:\n", size);
         print_segregated_list();
@@ -459,6 +456,7 @@ void *mm_malloc(size_t size)
 {   
     if (DEBUG) {
         printf("Malloc called for size %d\n", size);
+        mm_check(heap_listp);
     }
     size_t asize; /* adjusted block size */
     size_t extendsize; /* amount to extend heap if no fit */
@@ -509,6 +507,10 @@ void *mm_malloc(size_t size)
  *********************************************************/
 void *mm_realloc(void *ptr, size_t size)
 {
+    if(DEBUG){
+      printf("realloc\n");
+      mm_check(ptr);
+    }
     /* If size == 0 then this is just free, and we return NULL. */
     if(size == 0){
       mm_free(ptr);
@@ -549,6 +551,19 @@ void *mm_realloc(void *ptr, size_t size)
  * Check the consistency of the memory heap
  * Return nonzero if the heap is consistant.
  *********************************************************/
-int mm_check(void){
-  return 1;
+int mm_check(void* bp){
+  void *cur = heap_listp;
+  printf("mm_check\n");
+  while(GET_SIZE(HDRP(NEXT_BLKP(cur)))!=0){
+    //printf("hdr:%p cur:%p ftr:%p size:%lu alloc:%lu\n",HDRP(cur),cur,FTRP(cur),GET_SIZE(HDRP(cur)),GET_ALLOC(HDRP(cur)));
+    cur = NEXT_BLKP(cur);
+  }
+  printf("last block:%p tail:%p\n",cur,heap_tailp);
+  assert(cur==heap_tailp);
+  if (bp>=mem_heap_lo() && bp<=mem_heap_hi()){
+    return 1;
+  }
+  else {
+    return 0;
+  }
 }
