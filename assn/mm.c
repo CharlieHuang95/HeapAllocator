@@ -167,11 +167,11 @@ void free_from_list(void* p) {
     if (GET_PTR(ll_head + list_number) == p) {
         PUT_PTR(ll_head + list_number, GET_PTR(GET_NEXT(p)));
         if (GET_PTR(GET_NEXT(p)) != NULL) {
-            PUT_PTR(GET_PREV(GET_PTR(GET_NEXT(p))), NULL); // -1);
+            PUT_PTR(GET_PREV(GET_PTR(GET_NEXT(p))), NULL); 
         }
     } else {
         PUT_PTR(GET_NEXT(GET_PTR(GET_PREV(p))), GET_PTR(GET_NEXT(p)));
-        if (GET_PTR(GET_NEXT(p)) != NULL ) {//-1) {
+        if (GET_PTR(GET_NEXT(p)) != NULL ) {
             PUT_PTR(GET_PREV(GET_PTR(GET_NEXT(p))), GET_PTR(GET_PREV(p)));
         }
     }
@@ -250,8 +250,6 @@ void *coalesce(void *bp)
         size += next_size;
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
-
-//        free_from_list(NEXT_BLKP(bp));
 
         // Add the current block, with newly updated size, to the app ll
         add_to_list(bp);
@@ -372,8 +370,6 @@ void place(void* bp, size_t asize)
     free_from_list(bp);
     PUT(HDRP(bp), PACK(bsize, 1));
     PUT(FTRP(bp), PACK(bsize, 1));
-
-    // TODO: Consider breaking the block
 }
 
 /**********************************************************
@@ -460,6 +456,20 @@ void mm_free(void *bp)
     }
 }
 
+/*********************************************************
+ * get_adjusted_size adjusts the block size to account for
+ * overhead, pointers, and alignment
+ *********************************************************/
+size_t get_adjusted_size(size_t size) {
+    size_t asize;
+    if (size <= DSIZE)
+        asize = 2 * DSIZE;
+    else
+        asize = DSIZE * ((size + (DSIZE) + (DSIZE-1))/ DSIZE);
+    // Add the following extra DSIZE for linked list structure
+    asize += DSIZE;
+    return asize;
+}
 
 /**********************************************************
  * mm_malloc
@@ -483,14 +493,7 @@ void *mm_malloc(size_t size)
     if (size == 0)
         return NULL;
 
-    /* Adjust block size to include overhead and alignment reqs. */
-    if (size <= DSIZE)
-        asize = 2 * DSIZE;
-    else
-        asize = DSIZE * ((size + (DSIZE) + (DSIZE-1))/ DSIZE);
-
-    // Add the following extra DSIZE for linked list structure
-    asize += DSIZE;
+    asize = get_adjusted_size(size);
 
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
