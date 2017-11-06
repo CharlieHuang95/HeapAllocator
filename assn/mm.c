@@ -366,7 +366,7 @@ void place(void* bp, size_t asize)
 void* separate_if_applicable(void* bp, size_t asize) {
 	void* hdr_addr = HDRP(bp);
 	size_t bsize = GET_SIZE(hdr_addr);
-	if (bsize > asize + DSIZE + DSIZE) {
+	if (bsize > asize + DSIZE + DSIZE + /* buffer */ (DSIZE << 2)) {
 		if (DEBUG) {
 			printf("Separated a block of size %lu.\n", bsize);
 		}
@@ -514,29 +514,66 @@ void *mm_malloc(size_t size)
 void *mm_realloc(void *ptr, size_t size)
 {
     if(DEBUG){
-      printf("realloc\n");
-      mm_check(ptr);
+        printf("realloc: alloc %d old %lu, new %lu\n", GET_ALLOC(HDRP(ptr)), GET_SIZE(HDRP(ptr)), size);
+        mm_check(ptr);
     }
     /* If size == 0 then this is just free, and we return NULL. */
     if(size == 0){
-      mm_free(ptr);
-      return NULL;
+        mm_free(ptr);
+        return NULL;
     }
     /* If oldptr is NULL, then this is just malloc. */
     if (ptr == NULL)
-      return (mm_malloc(size));
+        return (mm_malloc(size));
 
     void *oldptr = ptr;
     void *newptr;
     size_t copySize;
+    size_t asize;
 
     copySize = GET_SIZE(HDRP(oldptr));
-    if (size + 48 < copySize) {
-        return oldptr;
+    asize = get_adjusted_size(size);    
+    if (asize < copySize) {
+        return oldptr;//separate_if_applicable(ptr, asize);
     }
-
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(ptr)));
+    size_t next_size = GET_SIZE(HDRP(NEXT_BLKP(ptr)));
+    if (!next_alloc) {
+        // Remove the next block from the linked-list
+        void* next_block = NEXT_BLKP(ptr);
+        free_from_list(next_block);
+        
+        if (copySize + next_size >= asize) {
+            PUT(HDRP(ptr), PACK(copySize + next_size, 1));
+            PUT(FTRP(ptr), PACK(copySize + next_size, 1));
+            return ptr;
+        }
+        
+    }
+        
     // TODO: check to see if there is space at the end
-
+    // Find last block
+    void* heap_last_block_footer = mem_heap_hi() + 1 - DSIZE;
+    void* heap_last_block_header = heap_last_block_footer - GET_SIZE(heap_last_block_footer) + WSIZE;
+    void* last_block = heap_last_block_header + DSIZE + WSIZE;
+    // If this is last block, then we extend heap by only necessary length
+    if (last_block == ptr) {
+        /*
+        size_t extendsize = MAX(asize - copySize, CHUNKSIZE);
+        void* throw_away;
+        if ((throw_away = extend_heap(extendsize/WSIZE)) == NULL)
+            return NULL;
+        // Add to list
+        //add_to_list(bp);
+        // Change size of header
+        PUT(HDRP(ptr), PACK(copySize + extendsize, 1));
+        // Change size of footer
+        PUT(FTRP(ptr), PACK(copySize + extendsize, 1));
+        printf("AYYY");
+        */
+    }
+    // Check to see if next blocks are free
+    
     // TODO: otherwise find new place for it
     newptr = mm_malloc(size);
     if (newptr == NULL)
