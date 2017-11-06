@@ -62,7 +62,6 @@ team_t team = {
 #define GET_PREV(bp)    ((char *)(bp) - DSIZE)
 #define GET_NEXT(bp)    ((char *)(bp) - WSIZE)
 
-
 /* Given block ptr bp, compute address of next and previous blocks */
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE - DSIZE)))
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE - DSIZE)))
@@ -80,9 +79,8 @@ const int kListSizes[26] = { 16, 32, 48, 64, 96, 128, 144, 160, 256, 512,
                              1 << 22, 1 << 23, 1 << 24, 1 << 25};
 
 const int kLength = sizeof(kListSizes) / sizeof(kListSizes[0]);
-
-// A pointer to the head of the segregated linked-list
 void* heap_listp = NULL;
+
 
 /* Helper function that prints out the state of the linked list*/
 void print_segregated_list(void) {
@@ -115,28 +113,12 @@ int get_appropriate_list(size_t asize) {
 }
 
 /* Find the smallest linked-list that has a free block that can DEFINITELY fit asize */
-void* get_possible_list2(size_t asize) {
-    int i;
-    uintptr_t* cur = NULL;
-    for (i = 0; i < kLength; ++i) {
-        if (kListSizes[i] >= asize * 2 && GET_PTR(mem_heap_lo() + i) != NULL) {
-            cur = GET_PTR(mem_heap_lo() + i);
-            if (DEBUG) {
-            printf("found cur 1-level up: %p\n", cur);
-            }
-        return (void *)cur;
-        }
-    }
-    return NULL;
-}
-
-/* Find the smallest linked-list that has a free block that can DEFINITELY fit asize */
 void* get_possible_list(size_t asize) {
   int i;
   uintptr_t* cur = NULL;
   for (i = 0; i < kLength; ++i) {
-    if (kListSizes[i] >= asize && GET_PTR(mem_heap_lo() + i) != NULL) {
-      cur = GET_PTR(mem_heap_lo() + i);
+    if (kListSizes[i] >= asize && GET_PTR((uintptr_t *)mem_heap_lo() + i) != NULL) {
+      cur = GET_PTR((uintptr_t *)mem_heap_lo() + i);
       if(GET_SIZE(HDRP(cur)) >= asize) {
         if (DEBUG) {
           printf("found cur same level up: %p\n", cur);
@@ -148,9 +130,9 @@ void* get_possible_list(size_t asize) {
       }
     }
   }
-  for ( i=0;i < kLength; ++i) {
-    if (kListSizes[i] >= asize * 2 && GET_PTR(mem_heap_lo() + i) != NULL) {
-      cur = GET_PTR(mem_heap_lo() + i);
+  for (i = 0; i < kLength; ++i) {
+    if (kListSizes[i] >= asize * 2 && GET_PTR((uintptr_t *)mem_heap_lo() + i) != NULL) {
+      cur = GET_PTR((uintptr_t *)mem_heap_lo() + i);
       if (DEBUG) {
         printf("found cur elsewhere: %p\n", cur);
       }
@@ -162,30 +144,24 @@ void* get_possible_list(size_t asize) {
 
 /* Adds a freed block to the linked-list. */
 void add_to_list(void* p) {
-	/* Verify that the given block is freed, and thus should be added to the linked-list*/
-    /*if (GET_ALLOC(HDRP(p))) {
-        printf("Error: Attempting to add an allocated block.\n");
-    }
-    */
 	if (DEBUG) {
 		printf("Adding a block of size %lu.\n", GET_SIZE(HDRP(p)));
 	}
     int list_number = get_appropriate_list(GET_SIZE(HDRP(p)));
     /* Check to see if the linked-list is empty (head is null) */
-    uintptr_t* head = GET_PTR(mem_heap_lo() + list_number);
+    uintptr_t* head = GET_PTR((uintptr_t *)mem_heap_lo() + list_number);
     if (head != NULL) {
         // Set the next node to have its previous point here
         PUT_PTR(GET_PREV(head), p);
     } 
     
-    PUT_PTR(GET_NEXT(p), GET_PTR(mem_heap_lo() + list_number));
+    PUT_PTR(GET_NEXT(p), GET_PTR((uintptr_t *)mem_heap_lo() + list_number));
     PUT_PTR(GET_PREV(p), NULL);
-    PUT_PTR(mem_heap_lo() + list_number, p);
+    PUT_PTR((uintptr_t *)mem_heap_lo() + list_number, p);
 }
 
 /* Remove an allocated block from the linked-list. */
-void free_from_list(void* p) {
-    //printf("LLhead %p, %p\n", mem_heap_lo(), mem_heap_lo());
+void free_from_list(void* p) { 
 	/* Verify that the given block is allocated, and thus should be removed from the linked-list */
     if (!GET_ALLOC(HDRP(p))) {
         //printf("Error: Attempting to remove a freed block.\n");
@@ -195,8 +171,8 @@ void free_from_list(void* p) {
     }
     int list_number = get_appropriate_list(GET_SIZE(HDRP(p)));
     /* If it is at the head, we must change the head */
-    if (GET_PTR(mem_heap_lo() + list_number) == p) {
-        PUT_PTR(mem_heap_lo() + list_number, GET_PTR(GET_NEXT(p)));
+    if (GET_PTR((uintptr_t *)mem_heap_lo() + list_number) == p) {
+        PUT_PTR((uintptr_t *)mem_heap_lo() + list_number, GET_PTR(GET_NEXT(p)));
         if (GET_PTR(GET_NEXT(p)) != NULL) {
             PUT_PTR(GET_PREV(GET_PTR(GET_NEXT(p))), NULL); 
         }
@@ -219,13 +195,12 @@ int mm_init(void)
 { 
     // We need to allocate room for kLength pointers
     int allocate_size = WSIZE * kLength;
-
+    //uintptr_t* heap_listp;
     if ((heap_listp = mem_sbrk(4*WSIZE + allocate_size + DSIZE)) == (void *)-1)
         return -1;
-    mem_heap_lo() = heap_listp;
-    int** p = heap_listp;
+ 
     for (int i = 0; i < kLength + 1; ++i) {
-        PUT_PTR(p + i, NULL);    // Set the initial values to NULL
+        PUT_PTR((uintptr_t*)heap_listp + i, NULL);    // Set the initial values to NULL
     }
     PUT(heap_listp + (0 * WSIZE + allocate_size), 0);
     PUT(heap_listp + (1 * WSIZE + allocate_size), PACK(DSIZE * 2, 1));   // prologue header
@@ -539,8 +514,6 @@ void *mm_malloc(size_t size)
 
 }
 
-int num_calls = 0;
-
 /**********************************************************
  * mm_realloc
  * Implemented simply in terms of mm_malloc and mm_free
@@ -621,7 +594,6 @@ void *mm_realloc(void *ptr, size_t size)
     if (size < copySize)
         copySize = size;
         // TODO: change location of end ptr, break off another piece if possible, return
-    num_calls ++;
     memcpy(newptr, oldptr, copySize);
     mm_free(oldptr);
     return newptr;
@@ -633,7 +605,7 @@ void *mm_realloc(void *ptr, size_t size)
  * Return nonzero if the heap is consistant.
  *********************************************************/
 int mm_check(void* bp){
-  void *cur = heap_listp;
+  void *cur = mem_heap_lo() ;
   printf("mm_check\n");
   while(GET_SIZE(HDRP(NEXT_BLKP(cur)))!=0){
     //printf("hdr:%p cur:%p ftr:%p size:%lu alloc:%lu\n",HDRP(cur),cur,FTRP(cur),GET_SIZE(HDRP(cur)),GET_ALLOC(HDRP(cur)));
