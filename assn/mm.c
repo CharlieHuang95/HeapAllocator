@@ -1,13 +1,20 @@
 /*
- * This implementation of malloc uses segregated explicit linked lists.
+ * This implementation of malloc uses segregated explicit linked-lists.
  * The head of each linked list is maintained at the top of head.
- 
- * Malloc attempts to find a fit in O(1). This is done by finding a free
- * larger block.
+ * The structure of an allocated block is shown below. A free block is similar.
+ * -------------------------------------------------------------------
+ * | header || prev_ptr | next_ptr ||...payload...| padding || footer |
+ * -------------------------------------------------------------------
+ *  HDRP(p)    p-DSIZE    p-WSIZE    p                        FTRP(p)
+ *
+ * Malloc attempts to find a fit in O(1). This is done by checking a constant
+ * number of blocks in the same size linked-list, and then checking in larger
+ * sized linked-list for a quick fit (rather than the best fit).
  * Free does immediate coalescing, and adds the node to the appropriate list.
  * Realloc is implemented directly using mm_malloc and mm_free.
  *
  */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -37,9 +44,9 @@ team_t team = {
 *************************************************************************/
 #define WSIZE       sizeof(void *)            /* word size (bytes) */
 #define DSIZE       (2 * WSIZE)            /* doubleword size (bytes) */
-#define CHUNKSIZE   (1<<6)      /* initial heap size (bytes) */
+#define CHUNKSIZE   (1 << 6)      /* initial heap size (bytes) */
 
-#define MAX(x,y) ((x) > (y)?(x) :(y))
+#define MAX(x,y) ((x) > (y) ? (x) : (y))
 
 /* Pack a size and allocated bit into a word */
 #define PACK(size, alloc) ((size) | (alloc))
@@ -67,24 +74,21 @@ team_t team = {
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE - DSIZE)))
 
 #define DEBUG 0
-#define M_DEBUG 0
 
 /* Forward Declare mm_check since it was not done in header */
 int mm_check();
 
-const int kListSizes[26] = { 16, 32, 48, 64, 96, 128, 144, 160, 256, 512,
-                             1024, 2048,
-                             4096, 8192, 1 << 14, 1 << 15, 1 << 16,
-                             1 << 17, 1 << 18, 1 << 19, 1 << 20, 1 << 21,
-                             1 << 22, 1 << 23, 1 << 24, 1 << 25};
+const int kListSizes[24] = { 16, 32, 48, 64, 96, 128, 144, 160, 256, 512,
+                             1024, 2048, 4096, 8192, 1 << 14, 1 << 15, 1 << 16,
+                             1 << 17, 1 << 18, 1 << 20, 1 << 22, 1 << 31 };
 
 const int kLength = sizeof(kListSizes) / sizeof(kListSizes[0]);
 void* heap_listp = NULL;
 
-
 /**********************************************************
  * print_segregated_list
- * Helper function that prints out the state of the linked list
+ * Helper function that prints out the state of the linked
+ * list
  **********************************************************/
 void print_segregated_list(void) {
     for (int i = 0; i < kLength; ++i) {
@@ -105,50 +109,40 @@ void print_segregated_list(void) {
 
 /**********************************************************
  * get_appropriate_list
- * Find the linked-list that is appropriate to insert the free block
+ * Find the linked-list that is appropriate to insert the
+ * free block
  **********************************************************/
 int get_appropriate_list(size_t asize) {
-    int list_choice = -1;
-    for (int i = 0; i < kLength; ++i) {
-        if (kListSizes[i] >= asize) {
-            list_choice = i;
-            break;
-        }
-    }
-    return list_choice;
+    for (int i = 0; i < kLength; ++i)
+        if (kListSizes[i] >= asize)
+            return i;
+    return -1;
 }
 
 /**********************************************************
  * get_possible_list
- * Find the smallest linked-list that has a free block that can DEFINITELY fit asize
+ * Find the smallest linked-list that has a free block that
+ * can DEFINITELY fit asize. Runtime O(1)
  **********************************************************/
 void* get_possible_list(size_t asize) {
-  int i;
-  uintptr_t* cur = NULL;
-  for (i = 0; i < kLength; ++i) {
-    if (kListSizes[i] >= asize && GET_PTR((uintptr_t *)mem_heap_lo() + i) != NULL) {
-      cur = GET_PTR((uintptr_t *)mem_heap_lo() + i);
-      if(GET_SIZE(HDRP(cur)) >= asize) {
-        if (DEBUG) {
-          printf("found cur same level up: %p\n", cur);
+    int i;
+    uintptr_t* cur = NULL;
+    for (i = 0; i < kLength; ++i) {
+        if (kListSizes[i] >= asize && GET_PTR((uintptr_t *)mem_heap_lo() + i) != NULL) {
+            cur = GET_PTR((uintptr_t *)mem_heap_lo() + i);
+            if (GET_SIZE(HDRP(cur)) >= asize)
+                return (void *)cur;
+            else
+                break;
         }
-        return (void *)cur;
-      }
-      else {
-        break;
-      }
     }
-  }
-  for (i = 0; i < kLength; ++i) {
-    if (kListSizes[i] >= (asize << 1) && GET_PTR((uintptr_t *)mem_heap_lo() + i) != NULL) {
-      cur = GET_PTR((uintptr_t *)mem_heap_lo() + i);
-      if (DEBUG) {
-        printf("found cur elsewhere: %p\n", cur);
-      }
-      return (void *)cur;
+    for (i = 0; i < kLength; ++i) {
+        if (kListSizes[i] >= (asize << 1) && GET_PTR((uintptr_t *)mem_heap_lo() + i) != NULL) {
+            cur = GET_PTR((uintptr_t *)mem_heap_lo() + i); 
+            return (void *)cur;
+        }
     }
-  }
-  return NULL;
+    return NULL;
 }
 
 /**********************************************************
@@ -222,9 +216,6 @@ int mm_init(void)
     PUT(heap_listp + (2 * WSIZE + DSIZE), PACK(DSIZE * 2, 1));   // prologue footer
     PUT(heap_listp + (3 * WSIZE + DSIZE), PACK(0, 1));    // epilogue header
     heap_listp += DSIZE + DSIZE;
-    if(DEBUG) {
-      printf("init heap head %p\n", heap_listp);
-    }
     return 0;
 }
 
@@ -481,7 +472,13 @@ size_t get_adjusted_size(size_t size) {
  * If no block satisfies the request, the heap is extended
  **********************************************************/
 void *mm_malloc(size_t size)
-{   
+{  
+/* 
+    if (size == 448)
+        size = 512;
+    if (size == 112)
+        size = 128; 
+*/
     if (DEBUG) {
         mm_check();
         printf("Malloc called for size %lu\n", size);
@@ -529,42 +526,63 @@ void *mm_malloc(size_t size)
 void *mm_realloc(void *ptr, size_t size)
 {
     /* If size == 0 then this is just free, and we return NULL. */
-    if(size == 0){
+    if (size == 0){
         mm_free(ptr);
         return NULL;
     }
     /* If oldptr is NULL, then this is just malloc. */
-    if (ptr == NULL)
+    if (ptr == NULL) {
         return (mm_malloc(size));
-
+    }
     void *oldptr = ptr;
     void *newptr;
     size_t copySize;
     size_t asize;
 
     copySize = GET_SIZE(HDRP(oldptr));
-    asize = get_adjusted_size(size);    
+    asize = get_adjusted_size(size);  
+
     if (asize < copySize) {
         return ptr;
-        add_to_list(ptr);
-        return separate_if_applicable(ptr, asize);
     }
+    /* Check to see if there is room (free block) in front of the block */
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(ptr)));
     size_t next_size = GET_SIZE(HDRP(NEXT_BLKP(ptr)));
     if (!next_alloc) {
-        // Remove the next block from the linked-list
         void* next_block = NEXT_BLKP(ptr); 
         if (copySize + next_size >= asize) {
+            /* Use the room since it is sufficient */
             free_from_list(next_block);
             PUT(HDRP(ptr), PACK(copySize + next_size, 1));
             PUT(FTRP(ptr), PACK(copySize + next_size, 1));
-            return ptr;
-            //add_to_list(ptr);
-            //return separate_if_applicable(ptr, asize);
+            return ptr; 
         }
-        
     }
-        
+
+    /* If the given block that you want to extend is at the end of the heap,
+       then extend the heap by the minimal amount */
+    void* last_blk_ft = mem_heap_hi() + 1 - DSIZE;
+    void* last_blk_hd = last_blk_ft - GET_SIZE(last_blk_ft) + WSIZE;
+
+    if (HDRP(ptr) == last_blk_hd) {
+        /* Only extend heap by the subtracted amount */
+        size_t extendsize = asize - GET_SIZE(last_blk_hd); 
+        if ((newptr = mem_sbrk(extendsize)) == (void *)-1)
+            return NULL;
+
+        /* Jump over pointers */
+        newptr += DSIZE;
+
+        /* Initialize free block header/footer and the epilogue header */
+        PUT(HDRP(newptr), PACK(extendsize, 0));         // free block header
+        PUT(FTRP(newptr), PACK(extendsize, 0));         // free block footer
+        PUT(HDRP(NEXT_BLKP(newptr)), PACK(0, 1));       // new epilogue header
+        PUT(HDRP(ptr), PACK(asize, 1));
+        PUT(FTRP(ptr), PACK(GET_SIZE(last_blk_hd), 1));
+        return ptr;
+    }
+
+    /* Find a new block for fit and copy over data */
     newptr = mm_malloc(size);
     if (newptr == NULL)
       return NULL;
@@ -595,8 +613,10 @@ int check_implicitly(void) {
         void* prev = GET_PTR(GET_PREV(bp));
         if (next != NULL && (next <= mem_heap_lo() || next >= mem_heap_hi())) {
             printf("Error: Invalid next pointer at %p\n", next);
+            return 0;
         } else if (prev != NULL && (prev <= mem_heap_lo() || prev >= mem_heap_hi())) {
             printf("Error: Invalid prev pointer at %p\n", prev);
+            return 0;
         }
     }
     if (bp - DSIZE != mem_heap_hi() + 1) {
