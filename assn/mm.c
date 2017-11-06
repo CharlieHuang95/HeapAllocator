@@ -70,7 +70,7 @@ team_t team = {
 #define M_DEBUG 0
 
 /* Forward Declare mm_check */
-int mm_check(void* bp);
+int mm_check(void);
 
 const int kListSizes[26] = { 16, 32, 48, 64, 96, 128, 144, 160, 256, 512,
                              1024, 2048,
@@ -82,7 +82,10 @@ const int kLength = sizeof(kListSizes) / sizeof(kListSizes[0]);
 void* heap_listp = NULL;
 
 
-/* Helper function that prints out the state of the linked list*/
+/**********************************************************
+ * print_segregated_list
+ * Helper function that prints out the state of the linked list
+ **********************************************************/
 void print_segregated_list(void) {
     for (int i = 0; i < kLength; ++i) {
         uintptr_t* cur = GET_PTR(mem_heap_lo() + i);
@@ -100,7 +103,10 @@ void print_segregated_list(void) {
     }
 }
 
-/* Find the linked-list that is appropriate to insert the free block */
+/**********************************************************
+ * get_appropriate_list
+ * Find the linked-list that is appropriate to insert the free block
+ **********************************************************/
 int get_appropriate_list(size_t asize) {
     int list_choice = -1;
     for (int i = 0; i < kLength; ++i) {
@@ -112,7 +118,10 @@ int get_appropriate_list(size_t asize) {
     return list_choice;
 }
 
-/* Find the smallest linked-list that has a free block that can DEFINITELY fit asize */
+/**********************************************************
+ * get_possible_list
+ * Find the smallest linked-list that has a free block that can DEFINITELY fit asize
+ **********************************************************/
 void* get_possible_list(size_t asize) {
   int i;
   uintptr_t* cur = NULL;
@@ -142,7 +151,11 @@ void* get_possible_list(size_t asize) {
   return NULL;
 }
 
-/* Adds a freed block to the linked-list. */
+
+/**********************************************************
+ * add_to_list
+ * Adds a freed block to the linked-list.
+ **********************************************************/
 void add_to_list(void* p) {
 	if (DEBUG) {
 		printf("Adding a block of size %lu.\n", GET_SIZE(HDRP(p)));
@@ -160,7 +173,10 @@ void add_to_list(void* p) {
     PUT_PTR((uintptr_t *)mem_heap_lo() + list_number, p);
 }
 
-/* Remove an allocated block from the linked-list. */
+/**********************************************************
+ * free_from_list
+ * Remove an allocated block from the linked-list.
+ **********************************************************/
 void free_from_list(void* p) { 
 	/* Verify that the given block is allocated, and thus should be removed from the linked-list */
     if (!GET_ALLOC(HDRP(p))) {
@@ -324,7 +340,7 @@ void *extend_heap(size_t words)
         size -= GET_SIZE(heap_last_block_header);
       }
     }
-    if (M_DEBUG) {
+    if (DEBUG) {
       printf("recalculated size: %lu\n", size);
     }
     if ( (bp = mem_sbrk(size)) == (void *)-1 )
@@ -431,9 +447,11 @@ void* find_fit(size_t asize)
  **********************************************************/
 void mm_free(void *bp)
 {
+    if (M_DEBUG) {
+      mm_check();
+    }
     if (DEBUG) {
       printf("Free called\n");
-      mm_check(bp);
     }
     if (bp == NULL){
       return;
@@ -473,10 +491,12 @@ size_t get_adjusted_size(size_t size) {
  * If no block satisfies the request, the heap is extended
  **********************************************************/
 void *mm_malloc(size_t size)
-{   
+{
+    if (M_DEBUG) {
+      mm_check();
+    }
     if (DEBUG) {
         printf("Malloc called for size %lu\n", size);
-        mm_check(heap_listp);
     }
     size_t asize; /* adjusted block size */
     size_t extendsize; /* amount to extend heap if no fit */
@@ -520,9 +540,11 @@ void *mm_malloc(size_t size)
  *********************************************************/
 void *mm_realloc(void *ptr, size_t size)
 {
+    if (M_DEBUG) {
+      mm_check();
+    }
     if(DEBUG){
-        printf("realloc: alloc %d old %lu, new %lu\n", GET_ALLOC(HDRP(ptr)), GET_SIZE(HDRP(ptr)), size);
-        mm_check(ptr);
+        printf("realloc: alloc %lu old %lu, new %lu\n", GET_ALLOC(HDRP(ptr)), GET_SIZE(HDRP(ptr)), size);
     }
     /* If size == 0 then this is just free, and we return NULL. */
     if(size == 0){
@@ -561,30 +583,8 @@ void *mm_realloc(void *ptr, size_t size)
         
     }
         
-    // TODO: check to see if there is space at the end
-    // Find last block
-    void* heap_last_block_footer = mem_heap_hi() + 1 - DSIZE;
-    void* heap_last_block_header = heap_last_block_footer - GET_SIZE(heap_last_block_footer) + WSIZE;
-    void* last_block = heap_last_block_header + DSIZE + WSIZE;
-    // If this is last block, then we extend heap by only necessary length
-    if (last_block == ptr) {
-        /*
-        size_t extendsize = MAX(asize - copySize, CHUNKSIZE);
-        void* throw_away;
-        if ((throw_away = extend_heap(extendsize/WSIZE)) == NULL)
-            return NULL;
-        // Add to list
-        //add_to_list(bp);
-        // Change size of header
-        PUT(HDRP(ptr), PACK(copySize + extendsize, 1));
-        // Change size of footer
-        PUT(FTRP(ptr), PACK(copySize + extendsize, 1));
-        printf("AYYY");
-        */
-    }
-    // Check to see if next blocks are free
-    
-    // TODO: otherwise find new place for it
+
+    // find new place for it
     newptr = mm_malloc(size);
     if (newptr == NULL)
       return NULL;
@@ -600,22 +600,48 @@ void *mm_realloc(void *ptr, size_t size)
 }
 
 /**********************************************************
+ * mm_check_sll
+ * Check the correctness of the segregated lists (sll)
+ * 1. is every block in the sll actuall free?
+ * 2. does this free block belong to this list?
+ * 3. are there any free blocks not coalesced properly?
+ *********************************************************/
+int mm_check_sll(){
+  int i;
+  int result = 1;
+  int prev = 0;
+  for (i = 0; i < kLength; ++i) {
+    uintptr_t* cur = GET_PTR((uintptr_t *)mem_heap_lo() + i);
+    while(cur!=NULL) {
+      if (GET_ALLOC(HDRP(cur)) == 1) {
+        printf("%p is allocated but found in the sll\n", cur);
+        result = 0;
+      }
+      size_t size = GET_SIZE(HDRP(cur));
+      if(size > kListSizes[i] || size <=prev) {
+        printf("block %p of size %lu is incorrectly put into sll %d\n", cur, size, kListSizes[i]);
+        result = 0;
+      }
+      char* prev_blk = PREV_BLKP(cur);
+      char* nxt_blk = NEXT_BLKP(cur);
+      if(GET_ALLOC(HDRP(prev_blk))==0 || GET_ALLOC(HDRP(nxt_blk))==0) {
+        printf("block %p was not properly coalesced.\n", cur);
+        result = 0;
+      }
+      cur = GET_PTR(GET_NEXT(cur));
+    }
+    prev = kListSizes[i];
+  }
+  return result;
+}
+
+/**********************************************************
  * mm_check
  * Check the consistency of the memory heap
  * Return nonzero if the heap is consistant.
  *********************************************************/
-int mm_check(void* bp){
-  void *cur = mem_heap_lo() ;
-  printf("mm_check\n");
-  while(GET_SIZE(HDRP(NEXT_BLKP(cur)))!=0){
-    //printf("hdr:%p cur:%p ftr:%p size:%lu alloc:%lu\n",HDRP(cur),cur,FTRP(cur),GET_SIZE(HDRP(cur)),GET_ALLOC(HDRP(cur)));
-    cur = NEXT_BLKP(cur);
-  }
-
-  if (bp>=mem_heap_lo() && bp<=mem_heap_hi()){
-    return 1;
-  }
-  else {
-    return 0;
-  }
+int mm_check(void){
+  int result = 1;
+  result = mm_check_sll();
+  return result;
 }
