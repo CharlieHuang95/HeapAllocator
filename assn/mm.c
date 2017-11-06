@@ -308,9 +308,9 @@ void *extend_heap(size_t words)
 
 	void* heap_last_block_footer = mem_heap_hi() + 1 - DSIZE;
 	void* heap_last_block_header = heap_last_block_footer - GET_SIZE(heap_last_block_footer) + WSIZE;
-    if (GET_ALLOC(heap_last_block_header)) == 0) {
+    if (GET_ALLOC(heap_last_block_header) == 0) {
       if (size <= GET_SIZE(heap_last_block_header)) {
-        return heap_last_block_header;
+        return heap_last_block_header + DSIZE + WSIZE;
       }
       else {
         //The last block in the heap is free so can be used to coalesce with the soon allocated block
