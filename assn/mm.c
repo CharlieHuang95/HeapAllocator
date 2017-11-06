@@ -116,18 +116,32 @@ int get_appropriate_list(size_t asize) {
 
 /* Find the smallest linked-list that has a free block that can DEFINITELY fit asize */
 void* get_possible_list(size_t asize) {
-    int i;
-    uintptr_t* cur = NULL;
-    for (i = 0; i < kLength; ++i) {
-        if (kListSizes[i] >= asize * 2 && GET_PTR(ll_head + i) != NULL) {
-            cur = GET_PTR(ll_head + i);
-            if (DEBUG) {
-            printf("found cur 1-level up: %p\n", cur);
-            }
-        return (void *)cur;
+  int i;
+  uintptr_t* cur = NULL;
+  for (i = 0; i < kLength; ++i) {
+    if (kListSizes[i] >= asize && GET_PTR(ll_head + i) != NULL) {
+      cur = GET_PTR(ll_head + i);
+      if(GET_SIZE(HDRP(cur)) >= asize) {
+        if (DEBUG) {
+          printf("found cur same level up: %p\n", cur);
         }
+        return (void *)cur;
+      }
+      else {
+        break;
+      }
     }
-    return NULL;
+  }
+  for ( i=0;i < kLength; ++i) {
+    if (kListSizes[i] >= asize * 2 && GET_PTR(ll_head + i) != NULL) {
+      cur = GET_PTR(ll_head + i);
+      if (DEBUG) {
+        printf("found cur elsewhere: %p\n", cur);
+      }
+      return (void *)cur;
+    }
+  }
+  return NULL;
 }
 
 /* Adds a freed block to the linked-list. */
@@ -514,7 +528,7 @@ void *mm_malloc(size_t size)
 void *mm_realloc(void *ptr, size_t size)
 {
     if(DEBUG){
-        printf("realloc: alloc %d old %lu, new %lu\n", GET_ALLOC(HDRP(ptr)), GET_SIZE(HDRP(ptr)), size);
+        printf("realloc: alloc %lu old %lu, new %lu\n", GET_ALLOC(HDRP(ptr)), GET_SIZE(HDRP(ptr)), size);
         mm_check(ptr);
     }
     /* If size == 0 then this is just free, and we return NULL. */
