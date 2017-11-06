@@ -82,7 +82,10 @@ const int kLength = sizeof(kListSizes) / sizeof(kListSizes[0]);
 void* heap_listp = NULL;
 
 
-/* Helper function that prints out the state of the linked list*/
+/**********************************************************
+ * print_segregated_list
+ * Helper function that prints out the state of the linked list
+ **********************************************************/
 void print_segregated_list(void) {
     for (int i = 0; i < kLength; ++i) {
         uintptr_t* cur = GET_PTR(mem_heap_lo() + i);
@@ -100,7 +103,10 @@ void print_segregated_list(void) {
     }
 }
 
-/* Find the linked-list that is appropriate to insert the free block */
+/**********************************************************
+ * get_appropriate_list
+ * Find the linked-list that is appropriate to insert the free block
+ **********************************************************/
 int get_appropriate_list(size_t asize) {
     int list_choice = -1;
     for (int i = 0; i < kLength; ++i) {
@@ -112,7 +118,10 @@ int get_appropriate_list(size_t asize) {
     return list_choice;
 }
 
-/* Find the smallest linked-list that has a free block that can DEFINITELY fit asize */
+/**********************************************************
+ * get_possible_list
+ * Find the smallest linked-list that has a free block that can DEFINITELY fit asize
+ **********************************************************/
 void* get_possible_list(size_t asize) {
   int i;
   uintptr_t* cur = NULL;
@@ -142,7 +151,10 @@ void* get_possible_list(size_t asize) {
   return NULL;
 }
 
-/* Adds a freed block to the linked-list. */
+/**********************************************************
+ * add_to_list
+ * Adds a freed block to the linked-list.
+ **********************************************************/
 void add_to_list(void* p) {
 	if (DEBUG) {
 		printf("Adding a block of size %lu.\n", GET_SIZE(HDRP(p)));
@@ -160,7 +172,10 @@ void add_to_list(void* p) {
     PUT_PTR((uintptr_t *)mem_heap_lo() + list_number, p);
 }
 
-/* Remove an allocated block from the linked-list. */
+/**********************************************************
+ * free_from_list
+ * Remove an allocated block from the linked-list.
+ **********************************************************/
 void free_from_list(void* p) { 
 	/* Verify that the given block is allocated, and thus should be removed from the linked-list */
     if (!GET_ALLOC(HDRP(p))) {
@@ -550,30 +565,6 @@ void *mm_realloc(void *ptr, size_t size)
         
     }
         
-    // TODO: check to see if there is space at the end
-    // Find last block
-    void* heap_last_block_footer = mem_heap_hi() + 1 - DSIZE;
-    void* heap_last_block_header = heap_last_block_footer - GET_SIZE(heap_last_block_footer) + WSIZE;
-    void* last_block = heap_last_block_header + DSIZE + WSIZE;
-    // If this is last block, then we extend heap by only necessary length
-    if (0) { //last_block == ptr) {
-        
-        size_t extendsize = asize - copySize;
-        if (extend_heap(extendsize/WSIZE) == NULL)
-            return NULL;
-        // Add to list
-        //add_to_list(bp);
-        // Change size of header
-        PUT(HDRP(ptr), PACK(copySize + extendsize, 1));
-        // Change size of footer
-        printf("footer %p, %p\n", FTRP(ptr), mem_heap_hi());
-        PUT(FTRP(ptr), PACK(copySize + extendsize, 1));
-        printf("AYYY");
-        
-    }
-    // Check to see if next blocks are free
-    
-    // TODO: otherwise find new place for it
     newptr = mm_malloc(size);
     if (newptr == NULL)
       return NULL;
