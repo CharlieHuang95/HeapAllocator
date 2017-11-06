@@ -83,7 +83,6 @@ const int kLength = sizeof(kListSizes) / sizeof(kListSizes[0]);
 // A pointer to the head of the segregated linked-list
 uintptr_t* ll_head = NULL;
 void* heap_listp = NULL;
-void* heap_tailp = NULL;
 
 /* Helper function that prints out the state of the linked list*/
 void print_segregated_list(void) {
@@ -201,7 +200,6 @@ int mm_init(void)
     PUT(heap_listp + (2 * WSIZE + allocate_size + DSIZE), PACK(DSIZE * 2, 1));   // prologue footer
     PUT(heap_listp + (3 * WSIZE + allocate_size + DSIZE), PACK(0, 1));    // epilogue header
     heap_listp += DSIZE + allocate_size + DSIZE;
-    heap_tailp = heap_listp;
     if(DEBUG) {
       printf("init heap head %p\n", heap_listp);
     }
@@ -231,18 +229,12 @@ void *coalesce(void *bp)
             printf("No coalescing possible\n");
         }
         add_to_list(bp);
-        if (bp > heap_tailp) {
-          heap_tailp = bp;
-        }
         return bp;
     }
 
     else if (prev_alloc && !next_alloc) { /* Case 2 */
         if (DEBUG) {
             printf("About to combine with next\n");
-        }
-        if (heap_tailp == NEXT_BLKP(bp)) {
-          heap_tailp = bp;
         }
         int next_size = GET_SIZE(HDRP(NEXT_BLKP(bp)));
         // Remove the next block from the appropriate ll
@@ -265,9 +257,7 @@ void *coalesce(void *bp)
                  GET_ALLOC(FTRP(PREV_BLKP(bp))));
             printf("About to combine with previous\n");
         }
-        if (heap_tailp == bp) {
-          heap_tailp = PREV_BLKP(bp);
-        }
+
         int prev_size = GET_SIZE(HDRP(PREV_BLKP(bp)));
         // Remove the previous block from the appropriate ll
         free_from_list(PREV_BLKP(bp));
@@ -283,10 +273,7 @@ void *coalesce(void *bp)
         if (DEBUG) {
             printf("About to combine with previous and next\n");
         }
-        //if (heap_tailp!=NULL && heap_tailp == NEXT_BLKP(bp)) {
-        if (heap_tailp == NEXT_BLKP(bp)) {
-          heap_tailp = PREV_BLKP(bp);
-        }
+
         // Remove next and prev block from their appropriate ll
         int next_size = GET_SIZE(FTRP(NEXT_BLKP(bp)));
         int prev_size = GET_SIZE(HDRP(PREV_BLKP(bp)));
@@ -318,16 +305,16 @@ void *extend_heap(size_t words)
 
     /* Allocate an even number of words to maintain alignments */
     size = (words % 2) ? (words+1) * WSIZE : words * WSIZE;
-    if (DEBUG) {
-      printf("original required size: %lu Is tail block free?:%lu tail block size:%lu\n", size, GET_ALLOC(HDRP(heap_tailp)), GET_SIZE(HDRP(heap_tailp)));
-    }
-    if (GET_ALLOC(HDRP(heap_tailp)) == 0) {
-      if (size <= GET_SIZE(HDRP(heap_tailp))) {
-        return heap_tailp;
+
+	void* heap_last_block_footer = mem_heap_hi() + 1 - DSIZE;
+	void* heap_last_block_header = heap_last_block_footer - GET_SIZE(heap_last_block_footer) + WSIZE;
+    if (GET_ALLOC(heap_last_block_header)) == 0) {
+      if (size <= GET_SIZE(heap_last_block_header)) {
+        return heap_last_block_header;
       }
       else {
         //The last block in the heap is free so can be used to coalesce with the soon allocated block
-        size -= GET_SIZE(HDRP(heap_tailp));
+        size -= GET_SIZE(heap_last_block_header);
       }
     }
     if (M_DEBUG) {
@@ -350,9 +337,7 @@ void *extend_heap(size_t words)
     if (DEBUG) {
       print_segregated_list();
     }
-    if (DEBUG && !mm_check(heap_tailp)) {
-      printf("Returning a pointer outside of the heap,\n");
-    }
+
     return new_bp;
 }
 
@@ -396,9 +381,6 @@ void* separate_if_applicable(void* bp, size_t asize) {
 		PUT(hdr_addr + bsize - WSIZE, PACK(csize, 0));
 		// TODO: improve style
 		add_to_list(hdr_addr + asize + DSIZE + WSIZE);
-		if (bp == heap_tailp) {
-			heap_tailp = hdr_addr + asize + DSIZE + WSIZE;
-		}
 		return bp;
 	}
 	else if (bsize >= asize) {
@@ -431,9 +413,6 @@ void* find_fit(size_t asize)
           printf("find_fit did not find anything\n");
         }
         return NULL;
-    }
-    if (DEBUG) {
-        printf("found bp: %p compared to tail:%p\n", bp, heap_tailp);
     }
 
 	return separate_if_applicable(bp, asize);
@@ -585,8 +564,7 @@ int mm_check(void* bp){
     //printf("hdr:%p cur:%p ftr:%p size:%lu alloc:%lu\n",HDRP(cur),cur,FTRP(cur),GET_SIZE(HDRP(cur)),GET_ALLOC(HDRP(cur)));
     cur = NEXT_BLKP(cur);
   }
-  printf("last block:%p tail:%p\n",cur,heap_tailp);
-  assert(cur==heap_tailp);
+
   if (bp>=mem_heap_lo() && bp<=mem_heap_hi()){
     return 1;
   }
