@@ -414,7 +414,7 @@ size_t get_adjusted_size(size_t size) {
  * If no block satisfies the request, the heap is extended
  **********************************************************/
 void *mm_malloc(size_t size)
-{ 
+{
     if (DEBUG) {
         mm_check();
     } 
@@ -595,5 +595,5 @@ int check_explicitly(){
  * Return nonzero if the heap is consistant.
  *********************************************************/
 int mm_check() {
-	return check_explicitly() || check_implicitly;
+	return check_explicitly() || check_implicitly();
 }
