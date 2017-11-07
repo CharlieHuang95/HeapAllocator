@@ -83,7 +83,6 @@ const int kListSizes[24] = { 16, 32, 48, 64, 96, 128, 144, 160, 256, 512,
                              1 << 17, 1 << 18, 1 << 20, 1 << 22, 1 << 31 };
 
 const int kLength = sizeof(kListSizes) / sizeof(kListSizes[0]);
-void* heap_listp = NULL;
 
 /**********************************************************
  * print_segregated_list
@@ -196,6 +195,7 @@ int mm_init(void)
 { 
     // We need to allocate room for kLength pointers
     int allocate_size = WSIZE * kLength;
+	void* heap_listp = NULL;
     if ((heap_listp = mem_sbrk(4 * WSIZE + allocate_size + DSIZE)) == (void *)-1)
         return -1;
  
@@ -454,19 +454,21 @@ void *mm_realloc(void *ptr, size_t size)
         mm_free(ptr);
         return NULL;
     }
-    /* If oldptr is NULL, then this is just malloc. */
+    /* If ptr is NULL, then this is just malloc. */
     if (ptr == NULL) {
         return (mm_malloc(size));
     }
-    void *oldptr = ptr;
     void *newptr;
-    size_t copySize;
+    size_t cur_size;
     size_t asize;
 
-    copySize = GET_SIZE(HDRP(oldptr));
+    cur_size = GET_SIZE(HDRP(ptr));
     asize = get_adjusted_size(size);  
 
-    if (asize < copySize) {
+	/* If the desired size is less than the current size, then simply return.
+	   For a general implementation of malloc, it might make sense to divide the
+	   resulting block up. For the testcases here however, it reduces utilization. */
+    if (asize < cur_size) {
         return ptr;
     }
     /* Check to see if there is room (free block) in front of the block */
@@ -474,11 +476,11 @@ void *mm_realloc(void *ptr, size_t size)
     size_t next_size = GET_SIZE(HDRP(NEXT_BLKP(ptr)));
     if (!next_alloc) {
         void* next_block = NEXT_BLKP(ptr); 
-        if (copySize + next_size >= asize) {
+        if (cur_size + next_size >= asize) {
             /* Use the room since it is sufficient */
             free_from_list(next_block);
-            PUT(HDRP(ptr), PACK(copySize + next_size, 1));
-            PUT(FTRP(ptr), PACK(copySize + next_size, 1));
+            PUT(HDRP(ptr), PACK(cur_size + next_size, 1));
+            PUT(FTRP(ptr), PACK(cur_size + next_size, 1));
             return ptr; 
         }
     }
@@ -512,12 +514,12 @@ void *mm_realloc(void *ptr, size_t size)
       return NULL;
 
     /* Copy the old data. */
-    copySize = GET_SIZE(HDRP(oldptr));
-    if (size < copySize)
-        copySize = size;
+    cur_size = GET_SIZE(HDRP(ptr));
+    if (size < cur_size)
+        cur_size = size;
 
-    memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
+    memcpy(newptr, ptr, cur_size);
+    mm_free(ptr);
     return newptr;
 }
 
@@ -531,8 +533,8 @@ void *mm_realloc(void *ptr, size_t size)
  *    mem_heap_lo() and mem_heap_hi()
  **********************************************************/
 int check_implicitly(void) {
-    void* bp = heap_listp;
-    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+    void* bp = mem_heap_lo() + WSIZE * kLength + DSIZE + DSIZE;
+    for (; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
         void* next = GET_PTR(GET_NEXT(bp));
         void* prev = GET_PTR(GET_PREV(bp));
         if (next != NULL && (next <= mem_heap_lo() || next >= mem_heap_hi())) {
@@ -593,10 +595,5 @@ int check_explicitly(){
  * Return nonzero if the heap is consistant.
  *********************************************************/
 int mm_check() {
-    if (!check_explicitly()) {
-        return 0;
-    } else if (!check_implicitly()) {
-        return 0;
-    }
-    return 1;
+	return check_explicitly() || check_implicitly;
 }
